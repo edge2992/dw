@@ -90,7 +90,9 @@ func TestCreateDoesNotClobberReadme(t *testing.T) {
 	now := time.Date(2026, 6, 14, 0, 0, 0, 0, time.UTC)
 	p, _ := Create(root, "research", "topic", now, DefaultTemplate)
 	custom := "EDITED BY USER"
-	os.WriteFile(filepath.Join(p.Path, "README.md"), []byte(custom), 0o644)
+	if err := os.WriteFile(filepath.Join(p.Path, "README.md"), []byte(custom), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	// re-create same project: must not overwrite
 	if _, err := Create(root, "research", "topic", now, DefaultTemplate); err != nil {

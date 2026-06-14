@@ -51,5 +51,12 @@ go install github.com/edge2992/dw@latest
 ## 開発
 
 ```sh
-go test ./...
+make fmt    # gofumpt + goimports (golangci-lint fmt)
+make lint   # golangci-lint run
+make test   # go test -race ./...
+make        # 上記まとめて
 ```
+
+- **Lint/Format**: golangci-lint v2(設定 `.golangci.yml`、standardセット + misspell/revive、formatterは gofumpt/goimports)
+- **Hooks**: pre-commit framework(`.pre-commit-config.yaml`)。グローバル pre-commit hook が gitleaks の後に委譲するため `pre-commit install` は不要。導入: `uv tool install pre-commit`、`brew install golangci-lint`
+- **CI**: GitHub Actions(`.github/workflows/ci.yml`)で build / test -race / golangci-lint を実行

@@ -1,0 +1,37 @@
+# Project-local hooks. The global pre-commit hook (~/.config/git/hooks/pre-commit)
+# runs gitleaks first, then delegates here. `pre-commit install` is NOT needed
+# because core.hooksPath already points at the global hook.
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-added-large-files
+      - id: check-merge-conflict
+
+  - repo: local
+    hooks:
+      # gofumpt + goimports をあてる(差分が出たらコミットを止めて再ステージを促す)
+      - id: golangci-lint-fmt
+        name: golangci-lint fmt
+        entry: golangci-lint fmt
+        language: system
+        types: [go]
+        pass_filenames: false
+
+      # lint + vet(govet は golangci-lint の standard セットに含まれる)
+      - id: golangci-lint
+        name: golangci-lint run
+        entry: golangci-lint run
+        language: system
+        types: [go]
+        pass_filenames: false
+
+      - id: go-test
+        name: go test
+        entry: go test ./...
+        language: system
+        types: [go]
+        pass_filenames: false

@@ -32,8 +32,10 @@ func Root() string {
 	return filepath.Join(home, "Discussion")
 }
 
-var slugInvalid = regexp.MustCompile(`[^a-z0-9-]+`)
-var slugDashes = regexp.MustCompile(`-+`)
+var (
+	slugInvalid = regexp.MustCompile(`[^a-z0-9-]+`)
+	slugDashes  = regexp.MustCompile(`-+`)
+)
 
 // Slugify normalizes a free-form topic into a filesystem-friendly slug.
 func Slugify(s string) string {

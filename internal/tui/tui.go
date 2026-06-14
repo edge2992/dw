@@ -77,6 +77,7 @@ func New(root, tmpl string, now time.Time, projects []workspace.Project) Model {
 	}
 }
 
+// Init implements tea.Model.
 func (m Model) Init() tea.Cmd { return nil }
 
 // rows computes the visible rows for the current mode + query.
@@ -141,6 +142,7 @@ func (m *Model) clampCursor(n int) {
 	}
 }
 
+// Update implements tea.Model.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	key, ok := msg.(tea.KeyMsg)
 	if !ok {
@@ -209,6 +211,7 @@ func (m Model) onEnter() (tea.Model, tea.Cmd) {
 	return m, tea.Quit
 }
 
+// View implements tea.Model.
 func (m Model) View() string {
 	var b strings.Builder
 	rows := m.rows()
