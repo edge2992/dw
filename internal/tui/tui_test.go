@@ -3,6 +3,7 @@ package tui
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -224,6 +225,29 @@ func TestLastPathUnmatchedIsNoop(t *testing.T) {
 	m = send(m, "enter")
 	if m.Result != "/d/a/2026-06-14-newest" {
 		t.Fatalf("unmatched pin should be a no-op, Result = %q", m.Result)
+	}
+}
+
+func TestPinMarkerAndHint(t *testing.T) {
+	projects := []workspace.Project{
+		{Name: "2026-06-14-newest", Date: "2026-06-14", Title: "newest", Path: "/d/a/2026-06-14-newest"},
+		{Name: "2026-06-10-older", Date: "2026-06-10", Title: "older", Path: "/d/b/2026-06-10-older"},
+	}
+	// with a matching pin, the marker and the shell hint both show
+	m := New("/d", workspace.DefaultTemplate, time.Now(), projects, "/d/b/2026-06-10-older")
+	view := m.View()
+	if !strings.Contains(view, "←前回") {
+		t.Errorf("expected pin marker in view:\n%s", view)
+	}
+	if !strings.Contains(view, "dw -") {
+		t.Errorf("expected dw - hint in view:\n%s", view)
+	}
+
+	// without a pin, neither the marker nor the hint appear
+	m2 := New("/d", workspace.DefaultTemplate, time.Now(), projects, "")
+	view2 := m2.View()
+	if strings.Contains(view2, "←前回") || strings.Contains(view2, "dw -") {
+		t.Errorf("unpinned view should have no marker/hint:\n%s", view2)
 	}
 }
 
