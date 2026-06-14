@@ -50,11 +50,21 @@ func RenderTemplate(tmpl, title, category, date string) string {
 	return r.Replace(tmpl)
 }
 
-// readTitle extracts the `title:` field from a project's README frontmatter.
-func readTitle(dir string) string {
+// frontmatter holds the fields dw reads from a project's README frontmatter.
+type frontmatter struct {
+	title   string
+	status  string
+	tags    string // raw value, e.g. "[gpu, linux]"
+	created string
+}
+
+// readFrontmatter parses the leading YAML frontmatter of a project's README in
+// a single pass. Missing fields come back as "".
+func readFrontmatter(dir string) frontmatter {
+	var fm frontmatter
 	f, err := os.Open(filepath.Join(dir, "README.md"))
 	if err != nil {
-		return ""
+		return fm
 	}
 	defer f.Close()
 	sc := bufio.NewScanner(f)
@@ -68,9 +78,19 @@ func readTitle(dir string) string {
 			}
 			break // end of frontmatter
 		}
-		if inFront && strings.HasPrefix(line, "title:") {
-			return strings.TrimSpace(strings.TrimPrefix(line, "title:"))
+		if !inFront {
+			continue
+		}
+		switch {
+		case strings.HasPrefix(line, "title:"):
+			fm.title = strings.TrimSpace(strings.TrimPrefix(line, "title:"))
+		case strings.HasPrefix(line, "status:"):
+			fm.status = strings.TrimSpace(strings.TrimPrefix(line, "status:"))
+		case strings.HasPrefix(line, "tags:"):
+			fm.tags = strings.TrimSpace(strings.TrimPrefix(line, "tags:"))
+		case strings.HasPrefix(line, "created:"):
+			fm.created = strings.TrimSpace(strings.TrimPrefix(line, "created:"))
 		}
 	}
-	return ""
+	return fm
 }
