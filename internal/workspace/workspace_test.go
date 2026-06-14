@@ -64,8 +64,8 @@ func TestCreateAndScan(t *testing.T) {
 	if _, err := os.Stat(readme); err != nil {
 		t.Errorf("README not created: %v", err)
 	}
-	// title parsed from frontmatter
-	if p.Title != "k8s-pod-oom" {
+	// dir name is slugified, but the title keeps the topic as typed
+	if p.Title != "K8s Pod OOM" {
 		t.Errorf("title = %q", p.Title)
 	}
 
@@ -85,6 +85,32 @@ func TestCreateAndScan(t *testing.T) {
 	// newest (2026-06-14) first
 	if projects[0].Name != "2026-06-14-k8s-pod-oom" {
 		t.Errorf("ordering wrong, first = %q", projects[0].Name)
+	}
+}
+
+func TestCreateTitleKeepsTypedTopic(t *testing.T) {
+	root := t.TempDir()
+	now := time.Date(2026, 6, 14, 0, 0, 0, 0, time.UTC)
+
+	// casing and spaces survive into the README title, while the dir is slugged
+	p, err := Create(root, "research", "Rust GC 設計メモ", now, DefaultTemplate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Name != "2026-06-14-rust-gc-設計メモ" {
+		t.Errorf("dir name = %q", p.Name)
+	}
+	if p.Title != "Rust GC 設計メモ" {
+		t.Errorf("title = %q, want the topic as typed", p.Title)
+	}
+
+	// symbol-only input has no slug, so both dir and title fall back to "untitled"
+	p2, err := Create(root, "research", "!!!", now, DefaultTemplate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p2.Name != "2026-06-14-untitled" || p2.Title != "untitled" {
+		t.Errorf("symbol-only: name=%q title=%q", p2.Name, p2.Title)
 	}
 }
 
