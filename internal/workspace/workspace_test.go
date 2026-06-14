@@ -117,6 +117,71 @@ func TestScanMissingRoot(t *testing.T) {
 	}
 }
 
+func TestScanOrdersDatedBeforeUndated(t *testing.T) {
+	root := t.TempDir()
+	// an undated, letter-prefixed dir would float to the top under a plain
+	// Name-descending sort; it must instead sink below the dated projects.
+	for _, dir := range []string{
+		"research/2026-06-10-older",
+		"research/2026-06-14-newest",
+		"research/zzz-legacy", // undated
+	} {
+		if err := os.MkdirAll(filepath.Join(root, dir), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	projects, err := Scan(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"2026-06-14-newest", "2026-06-10-older", "zzz-legacy"}
+	for i, w := range want {
+		if projects[i].Name != w {
+			t.Errorf("order[%d] = %q, want %q", i, projects[i].Name, w)
+		}
+	}
+}
+
+func TestReadFrontmatter(t *testing.T) {
+	dir := t.TempDir()
+	readme := "---\ntitle: PC Setup\nstatus: active\ntags: [gpu, linux]\ncreated: 2026-06-13\n---\n\n# body\n"
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte(readme), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	p := parseProject("research", "2026-06-13-pc", dir)
+	if p.Title != "PC Setup" || p.Status != "active" || p.Tags != "[gpu, linux]" || p.Created != "2026-06-13" {
+		t.Errorf("got %+v", p)
+	}
+}
+
+func TestSaveAndLoadLast(t *testing.T) {
+	tmp := t.TempDir()
+	// cover both os.UserCacheDir backends (XDG on Linux, HOME/Library on macOS)
+	// so the test stays isolated and never touches the real cache.
+	t.Setenv("HOME", tmp)
+	t.Setenv("XDG_CACHE_HOME", tmp)
+	if got := LastPath(); got != "" {
+		t.Errorf("expected empty before save, got %q", got)
+	}
+	dir := filepath.Join(tmp, "proj")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveLast(dir); err != nil {
+		t.Fatal(err)
+	}
+	if got := LastPath(); got != dir {
+		t.Errorf("LastPath = %q, want %q", got, dir)
+	}
+	// a recorded path that no longer exists reads back as empty
+	if err := os.RemoveAll(dir); err != nil {
+		t.Fatal(err)
+	}
+	if got := LastPath(); got != "" {
+		t.Errorf("stale path should read empty, got %q", got)
+	}
+}
+
 func TestCategories(t *testing.T) {
 	ps := []Project{{Category: "custom"}, {Category: "research"}}
 	cats := Categories(ps)

@@ -12,6 +12,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/mattn/go-runewidth"
 	"github.com/sahilm/fuzzy"
 )
 
@@ -65,16 +66,37 @@ type Model struct {
 	Err    error
 }
 
-// New builds the initial model.
-func New(root, tmpl string, now time.Time, projects []workspace.Project) Model {
+// New builds the initial model. lastPath, when it matches a project, is pinned
+// to the top of the browse list so the most common move — resuming the previous
+// workspace — is one Enter away; pass "" to disable pinning.
+func New(root, tmpl string, now time.Time, projects []workspace.Project, lastPath string) Model {
 	return Model{
 		root:       root,
 		tmpl:       tmpl,
 		now:        now,
-		projects:   projects,
+		projects:   pinLast(projects, lastPath),
 		categories: workspace.Categories(projects),
 		mode:       modeBrowse,
 	}
+}
+
+// pinLast returns projects with the lastPath entry moved to the front, leaving
+// the input slice untouched. A blank or unmatched lastPath returns it as-is.
+func pinLast(projects []workspace.Project, lastPath string) []workspace.Project {
+	if lastPath == "" {
+		return projects
+	}
+	for i, p := range projects {
+		if p.Path != lastPath {
+			continue
+		}
+		out := make([]workspace.Project, 0, len(projects))
+		out = append(out, p)
+		out = append(out, projects[:i]...)
+		out = append(out, projects[i+1:]...)
+		return out
+	}
+	return projects
 }
 
 // Init implements tea.Model.
@@ -151,7 +173,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	switch key.String() {
-	case "ctrl+c", "esc":
+	case "ctrl+c":
+		m.Result = ""
+		return m, tea.Quit
+	case "esc":
+		// From category selection, esc steps back to browse so a mistyped
+		// topic can be fixed without restarting; from browse it aborts.
+		if m.mode == modeCategory {
+			m.mode = modeBrowse
+			m.catQuery = ""
+			m.cursor = 0
+			return m, nil
+		}
 		m.Result = ""
 		return m, tea.Quit
 	case "up", "ctrl+p":
@@ -233,7 +266,11 @@ func (m Model) View() string {
 		b.WriteString(m.renderRow(rows[i], i == m.cursor))
 	}
 	b.WriteString("\n")
-	b.WriteString(dimStyle.Render("↑↓ 選択  enter 決定  esc 中止"))
+	esc := "esc 中止"
+	if m.mode == modeCategory {
+		esc = "esc 戻る"
+	}
+	b.WriteString(dimStyle.Render("↑↓ 選択  enter 決定  " + esc))
 	b.WriteString("\n")
 	return b.String()
 }
@@ -255,14 +292,43 @@ func (m Model) renderRow(r row, selected bool) string {
 		if date == "" {
 			date = "          "
 		}
-		text = fmt.Sprintf("%s  %-10s %s", date, p.Category, p.Title)
+		// runewidth.FillRight pads by display cells, so wide (CJK) category
+		// names stay aligned where a plain %-10s would drift.
+		text = date + "  " + runewidth.FillRight(p.Category, 10) + " " + p.Title
 	}
 	prefix := "  "
 	if selected {
 		prefix = "› "
 		text = selStyle.Render(text)
 	}
-	return prefix + text + "\n"
+	out := prefix + text + "\n"
+	if selected && r.kind == rowProject {
+		if meta := metaLine(r.proj); meta != "" {
+			out += dimStyle.Render("    "+meta) + "\n"
+		}
+	}
+	return out
+}
+
+// metaLine renders the dim one-line detail shown under the selected project:
+// the status, tags, and created date drawn from the README frontmatter. Empty
+// fields are skipped, and it returns "" when nothing is worth showing.
+func metaLine(p workspace.Project) string {
+	var parts []string
+	if p.Status != "" {
+		parts = append(parts, "status:"+p.Status)
+	}
+	if p.Tags != "" && p.Tags != "[]" {
+		parts = append(parts, "tags:"+p.Tags)
+	}
+	created := p.Created
+	if created == "" {
+		created = p.Date
+	}
+	if created != "" {
+		parts = append(parts, "created:"+created)
+	}
+	return strings.Join(parts, "  ")
 }
 
 func windowBounds(cursor, n, size int) (int, int) {

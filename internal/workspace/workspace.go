@@ -19,6 +19,9 @@ type Project struct {
 	Topic    string // slug without the date prefix, e.g. "pc-setup"
 	Date     string // "2026-06-13", or "" when the dir has no date prefix
 	Title    string // title from README frontmatter, falls back to Topic
+	Status   string // status from README frontmatter, e.g. "active"
+	Tags     string // raw tags from README frontmatter, e.g. "[gpu, linux]"
+	Created  string // created date from README frontmatter
 	Path     string // absolute path
 }
 
@@ -60,10 +63,14 @@ func parseProject(category, name, path string) Project {
 		p.Date = m[1]
 		p.Topic = m[2]
 	}
-	p.Title = readTitle(path)
+	fm := readFrontmatter(path)
+	p.Title = fm.title
 	if p.Title == "" {
 		p.Title = p.Topic
 	}
+	p.Status = fm.status
+	p.Tags = fm.tags
+	p.Created = fm.created
 	return p
 }
 
@@ -97,9 +104,19 @@ func Scan(root string) ([]Project, error) {
 	return projects, nil
 }
 
-// sortProjects orders by Name descending so dated dirs are newest-first.
+// sortProjects orders dated projects newest-first, then undated ones last.
+// Without this, a plain Name-descending sort would float letter-prefixed or
+// undated dirs above dated ones (ASCII letters sort after digits), so the
+// default selection would land on a legacy dir instead of the newest project.
 func sortProjects(ps []Project) {
 	sort.SliceStable(ps, func(i, j int) bool {
+		di, dj := ps[i].Date != "", ps[j].Date != ""
+		if di != dj {
+			return di // dated projects come before undated ones
+		}
+		if ps[i].Date != ps[j].Date {
+			return ps[i].Date > ps[j].Date // newer date first
+		}
 		return ps[i].Name > ps[j].Name
 	})
 }

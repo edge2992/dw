@@ -48,7 +48,7 @@ func TestJumpToExistingProject(t *testing.T) {
 		{Category: "research", Name: "2026-06-13-pc-setup", Topic: "pc-setup", Date: "2026-06-13", Title: "pc-setup", Path: "/d/research/2026-06-13-pc-setup"},
 		{Category: "incident", Name: "2026-06-10-db", Topic: "db", Date: "2026-06-10", Title: "db", Path: "/d/incident/2026-06-10-db"},
 	}
-	m := New("/d", workspace.DefaultTemplate, time.Now(), projects)
+	m := New("/d", workspace.DefaultTemplate, time.Now(), projects, "")
 
 	// empty query, enter selects first (newest) project
 	m = send(m, "enter")
@@ -62,7 +62,7 @@ func TestFilterThenJump(t *testing.T) {
 		{Category: "research", Name: "2026-06-13-pc-setup", Title: "pc-setup", Path: "/d/a"},
 		{Category: "incident", Name: "2026-06-10-db-outage", Title: "db-outage", Path: "/d/b"},
 	}
-	m := New("/d", workspace.DefaultTemplate, time.Now(), projects)
+	m := New("/d", workspace.DefaultTemplate, time.Now(), projects, "")
 	m = typeStr(m, "outage")
 	// first fuzzy row should be the db-outage project; enter jumps
 	m = send(m, "enter")
@@ -74,7 +74,7 @@ func TestFilterThenJump(t *testing.T) {
 func TestCreateFlow(t *testing.T) {
 	root := t.TempDir()
 	now := time.Date(2026, 6, 14, 0, 0, 0, 0, time.UTC)
-	m := New(root, workspace.DefaultTemplate, now, nil)
+	m := New(root, workspace.DefaultTemplate, now, nil, "")
 
 	// type a topic with no existing match
 	m = typeStr(m, "new idea")
@@ -104,7 +104,7 @@ func TestCreateFlow(t *testing.T) {
 func TestNewCategoryCreation(t *testing.T) {
 	root := t.TempDir()
 	now := time.Date(2026, 6, 14, 0, 0, 0, 0, time.UTC)
-	m := New(root, workspace.DefaultTemplate, now, nil)
+	m := New(root, workspace.DefaultTemplate, now, nil, "")
 
 	m = typeStr(m, "topic")
 	// jump to create row
@@ -134,7 +134,7 @@ func TestMultiRuneInput(t *testing.T) {
 	// terminals can deliver several chars in a single KeyMsg
 	root := t.TempDir()
 	now := time.Date(2026, 6, 14, 0, 0, 0, 0, time.UTC)
-	m := New(root, workspace.DefaultTemplate, now, nil)
+	m := New(root, workspace.DefaultTemplate, now, nil, "")
 	m = send(m, "ptytest") // one KeyMsg carrying 7 runes
 	if m.query != "ptytest" {
 		t.Fatalf("query = %q, want ptytest", m.query)
@@ -165,9 +165,80 @@ func TestBrowseCreateRowMatchesSlug(t *testing.T) {
 
 func TestEscAborts(t *testing.T) {
 	m := New("/d", workspace.DefaultTemplate, time.Now(),
-		[]workspace.Project{{Path: "/d/x", Name: "n"}})
+		[]workspace.Project{{Path: "/d/x", Name: "n"}}, "")
 	m = send(m, "esc")
 	if m.Result != "" {
 		t.Fatalf("esc should abort, Result = %q", m.Result)
+	}
+}
+
+func TestEscFromCategoryReturnsToBrowse(t *testing.T) {
+	root := t.TempDir()
+	now := time.Date(2026, 6, 14, 0, 0, 0, 0, time.UTC)
+	m := New(root, workspace.DefaultTemplate, now, nil, "")
+
+	// reach category mode via the create row
+	m = typeStr(m, "topic")
+	rows := m.rows()
+	for i := 0; i < len(rows)-1; i++ {
+		m = send(m, "down")
+	}
+	m = send(m, "enter")
+	if m.mode != modeCategory {
+		t.Fatalf("expected category mode")
+	}
+
+	// esc steps back to browse, keeping the typed topic, without aborting
+	m = send(m, "esc")
+	if m.mode != modeBrowse {
+		t.Fatalf("esc should return to browse, mode = %v", m.mode)
+	}
+	if m.Result != "" {
+		t.Fatalf("esc to browse must not set Result, got %q", m.Result)
+	}
+	if m.query != "topic" {
+		t.Fatalf("query should be preserved, got %q", m.query)
+	}
+}
+
+func TestLastPathPinnedToTop(t *testing.T) {
+	projects := []workspace.Project{
+		{Name: "2026-06-14-newest", Date: "2026-06-14", Title: "newest", Path: "/d/a/2026-06-14-newest"},
+		{Name: "2026-06-10-older", Date: "2026-06-10", Title: "older", Path: "/d/b/2026-06-10-older"},
+	}
+	// pin the older project; empty query + enter must resume it, not the newest
+	m := New("/d", workspace.DefaultTemplate, time.Now(), projects, "/d/b/2026-06-10-older")
+	m = send(m, "enter")
+	if m.Result != "/d/b/2026-06-10-older" {
+		t.Fatalf("pinned project not first, Result = %q", m.Result)
+	}
+}
+
+func TestLastPathUnmatchedIsNoop(t *testing.T) {
+	projects := []workspace.Project{
+		{Name: "2026-06-14-newest", Date: "2026-06-14", Path: "/d/a/2026-06-14-newest"},
+		{Name: "2026-06-10-older", Date: "2026-06-10", Path: "/d/b/2026-06-10-older"},
+	}
+	// a stale lastPath that no longer matches must leave ordering untouched
+	m := New("/d", workspace.DefaultTemplate, time.Now(), projects, "/d/gone")
+	m = send(m, "enter")
+	if m.Result != "/d/a/2026-06-14-newest" {
+		t.Fatalf("unmatched pin should be a no-op, Result = %q", m.Result)
+	}
+}
+
+func TestMetaLine(t *testing.T) {
+	got := metaLine(workspace.Project{Status: "active", Tags: "[gpu, linux]", Created: "2026-06-13"})
+	want := "status:active  tags:[gpu, linux]  created:2026-06-13"
+	if got != want {
+		t.Fatalf("metaLine = %q, want %q", got, want)
+	}
+	// empty tags ("[]") are dropped; created falls back to the dir Date
+	got = metaLine(workspace.Project{Status: "done", Tags: "[]", Date: "2026-01-01"})
+	if want := "status:done  created:2026-01-01"; got != want {
+		t.Fatalf("metaLine fallback = %q, want %q", got, want)
+	}
+	if got := metaLine(workspace.Project{}); got != "" {
+		t.Fatalf("empty project should yield empty meta, got %q", got)
 	}
 }

@@ -17,12 +17,18 @@ $DISCUSSION_ROOT/<category>/<YYYY-MM-DD>-<topic-slug>/
 
 ## 使い方
 
-`dw` を起動すると既存プロジェクトの**あいまいリスト**が出る(新しい順)。
+`dw` を起動すると既存プロジェクトの**あいまいリスト**が出る(日付の新しい順、
+日付なしディレクトリは末尾)。**直前に選んだプロジェクトは最上段にピン留め**され、
+そのまま `enter` で前回の続きに戻れる。
 
 - 打って絞り込み → `enter` で既存プロジェクトへ **cd**
+- 選択中の行の下に `status` / `tags` / `created`(README frontmatter)を表示
 - マッチが無ければ `+ 作成: <date>-<slug>` が出る → `enter` で **category選択** → 作成して cd
 - category選択でも未知の名前を打てば新カテゴリを作れる
-- `↑/↓`(`ctrl+p/n`)で移動、`esc`/`ctrl+c` で中止
+- category選択で `esc` を押すと browse に**戻る**(トピックの打ち直しが効く)
+- `↑/↓`(`ctrl+p/n`)で移動、browse で `esc`/`ctrl+c` で中止
+
+`dw -` は TUI を開かず、**直前のプロジェクトへ即ジャンプ**する(`cd -` 感覚)。
 
 `dw` 単体ではシェルの作業ディレクトリは変えられないため(子プロセスのため)、
 選んだパスは **stdout** に出力する。`cd` はシェル側のラッパー関数が行う。
@@ -33,6 +39,18 @@ function dw() {
   dir=$(command dw "$@") && [ -n "$dir" ] && cd "$dir"
 }
 ```
+
+cd した先で Claude をそのまま起動したいなら、薄いラッパーをもう1つ足す:
+
+```zsh
+function dwc() {
+  local dir
+  dir=$(command dw "$@") && [ -n "$dir" ] && cd "$dir" && claude
+}
+```
+
+直前に選んだプロジェクトは `os.UserCacheDir()`(macOS は `~/Library/Caches/dw/last`、
+Linux は `~/.cache/dw/last`)に記録され、ピン留めと `dw -` の両方で使われる。
 
 ## インストール
 
@@ -46,9 +64,9 @@ go install github.com/edge2992/dw@latest
 
 ## 設計
 
-- `internal/workspace` — スキャン / スラッグ化 / 作成 / テンプレート(純粋ロジック、テスト済み)
-- `internal/tui` — bubbletea による単一あいまいリスト(ジャンプ + 作成 + カテゴリ選択)
-- `main.go` — 配線(scan → TUI → 選択パスを stdout 出力)
+- `internal/workspace` — スキャン / スラッグ化 / 作成 / テンプレート / 直前パスの永続化(純粋ロジック、テスト済み)
+- `internal/tui` — bubbletea による単一あいまいリスト(ジャンプ + 作成 + カテゴリ選択 + ピン留め)
+- `main.go` — 配線(`dw -` 即ジャンプ / scan → TUI → 選択パスを stdout 出力 → 直前パス記録)
 
 ## 開発
 
