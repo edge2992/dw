@@ -34,7 +34,11 @@ func main() {
 		os.Exit(1)
 	}
 
-	fm := final.(tui.Model)
+	fm, ok := final.(tui.Model)
+	if !ok {
+		fmt.Fprintln(os.Stderr, "dw: unexpected model type")
+		os.Exit(1)
+	}
 	if fm.Err != nil {
 		fmt.Fprintln(os.Stderr, "dw:", fm.Err)
 		os.Exit(1)

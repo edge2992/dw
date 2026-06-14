@@ -52,7 +52,7 @@ func RenderTemplate(tmpl, title, category, date string) string {
 
 // readTitle extracts the `title:` field from a project's README frontmatter.
 func readTitle(dir string) string {
-	f, err := os.Open(dir + "/README.md")
+	f, err := os.Open(filepath.Join(dir, "README.md"))
 	if err != nil {
 		return ""
 	}

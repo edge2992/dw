@@ -1,5 +1,7 @@
 # dw — discussion workspace picker
 
+![coverage](.github/badges/coverage.svg)
+
 Claudeとの議論・自律調査プロジェクトを素早く作成・横断できる対話CLI。
 `ghq` の「勝手にディレクトリを作る」体験と `fzf` の「あいまいジャンプ」を、
 非gitの調査ディレクトリ向けに1つにまとめたもの。

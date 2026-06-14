@@ -17,6 +17,9 @@ func TestSlugify(t *testing.T) {
 		"already-slugged": "already-slugged",
 		"---trim---":      "trim",
 		"":                "",
+		"機械学習 調査":         "機械学習-調査", // unicode letters are preserved
+		"PR #42 fix":      "pr-42-fix",
+		"!!!":             "", // no letters/numbers -> empty
 	}
 	for in, want := range cases {
 		if got := Slugify(in); got != want {

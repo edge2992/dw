@@ -145,6 +145,24 @@ func TestMultiRuneInput(t *testing.T) {
 	}
 }
 
+func TestBrowseCreateRowMatchesSlug(t *testing.T) {
+	// symbol-only query yields no slug -> no create row offered
+	for _, r := range browseRows(nil, "!!!") {
+		if r.kind == rowCreate {
+			t.Fatal("create row should not appear for an empty-slug query")
+		}
+	}
+	// japanese query is preserved, and the create label equals the slug that
+	// Create will actually use for the directory name
+	jp := browseRows(nil, "機械学習 調査")
+	if len(jp) != 1 || jp[0].kind != rowCreate {
+		t.Fatalf("expected one create row, got %+v", jp)
+	}
+	if want := workspace.Slugify("機械学習 調査"); jp[0].label != want {
+		t.Fatalf("create label = %q, want %q", jp[0].label, want)
+	}
+}
+
 func TestEscAborts(t *testing.T) {
 	m := New("/d", workspace.DefaultTemplate, time.Now(),
 		[]workspace.Project{{Path: "/d/x", Name: "n"}})

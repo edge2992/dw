@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 )
 
 // Project is a single discussion workspace directory.
@@ -32,19 +33,24 @@ func Root() string {
 	return filepath.Join(home, "Discussion")
 }
 
-var (
-	slugInvalid = regexp.MustCompile(`[^a-z0-9-]+`)
-	slugDashes  = regexp.MustCompile(`-+`)
-)
+var slugDashes = regexp.MustCompile(`-+`)
 
 // Slugify normalizes a free-form topic into a filesystem-friendly slug.
+// Unicode letters/numbers are kept (so Japanese topics survive); whitespace and
+// separators collapse to "-", and other punctuation/symbols are dropped. May
+// return "" when the input has no letters or numbers (e.g. "!!!").
 func Slugify(s string) string {
 	s = strings.ToLower(strings.TrimSpace(s))
-	s = strings.ReplaceAll(s, "_", "-")
-	s = strings.ReplaceAll(s, " ", "-")
-	s = slugInvalid.ReplaceAllString(s, "")
-	s = slugDashes.ReplaceAllString(s, "-")
-	return strings.Trim(s, "-")
+	var b strings.Builder
+	for _, r := range s {
+		switch {
+		case unicode.IsLetter(r) || unicode.IsNumber(r):
+			b.WriteRune(r)
+		case r == '-' || r == '_' || unicode.IsSpace(r):
+			b.WriteByte('-')
+		}
+	}
+	return strings.Trim(slugDashes.ReplaceAllString(b.String(), "-"), "-")
 }
 
 // parseProject builds a Project from a category and directory name.
@@ -135,7 +141,10 @@ func Create(root, category, topic string, now time.Time, tmpl string) (Project, 
 		return Project{}, err
 	}
 	readme := filepath.Join(path, "README.md")
-	if _, err := os.Stat(readme); os.IsNotExist(err) {
+	if _, err := os.Stat(readme); err != nil {
+		if !os.IsNotExist(err) {
+			return Project{}, err
+		}
 		content := RenderTemplate(tmpl, slug, category, date)
 		if err := os.WriteFile(readme, []byte(content), 0o644); err != nil {
 			return Project{}, err

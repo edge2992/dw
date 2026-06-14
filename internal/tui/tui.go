@@ -115,8 +115,10 @@ func browseRows(projects []workspace.Project, query string) []row {
 	for _, i := range fuzzyIndices(query, targets) {
 		rows = append(rows, row{kind: rowProject, proj: projects[i]})
 	}
-	if strings.TrimSpace(query) != "" {
-		rows = append(rows, row{kind: rowCreate, label: workspace.Slugify(query)})
+	// only offer "create" when the query yields a non-empty slug, so the
+	// displayed name always matches the directory Create will make
+	if slug := workspace.Slugify(query); slug != "" {
+		rows = append(rows, row{kind: rowCreate, label: slug})
 	}
 	return rows
 }
