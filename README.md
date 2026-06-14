@@ -1,0 +1,55 @@
+# dw — discussion workspace picker
+
+Claudeとの議論・自律調査プロジェクトを素早く作成・横断できる対話CLI。
+`ghq` の「勝手にディレクトリを作る」体験と `fzf` の「あいまいジャンプ」を、
+非gitの調査ディレクトリ向けに1つにまとめたもの。
+
+プロジェクトは次のレイアウトで管理する:
+
+```
+$DISCUSSION_ROOT/<category>/<YYYY-MM-DD>-<topic-slug>/
+  README.md   # frontmatter付きインデックス
+```
+
+`$DISCUSSION_ROOT` 既定は `~/Discussion`。
+
+## 使い方
+
+`dw` を起動すると既存プロジェクトの**あいまいリスト**が出る(新しい順)。
+
+- 打って絞り込み → `enter` で既存プロジェクトへ **cd**
+- マッチが無ければ `+ 作成: <date>-<slug>` が出る → `enter` で **category選択** → 作成して cd
+- category選択でも未知の名前を打てば新カテゴリを作れる
+- `↑/↓`(`ctrl+p/n`)で移動、`esc`/`ctrl+c` で中止
+
+`dw` 単体ではシェルの作業ディレクトリは変えられないため(子プロセスのため)、
+選んだパスは **stdout** に出力する。`cd` はシェル側のラッパー関数が行う。
+
+```zsh
+function dw() {
+  local dir
+  dir=$(command dw "$@") && [ -n "$dir" ] && cd "$dir"
+}
+```
+
+## インストール
+
+```sh
+go install github.com/edge2992/dw@latest
+```
+
+テンプレートは `~/.config/discussion/template.md` があればそれを使い、
+無ければ組み込みの既定テンプレートを使う。`{{title}}` `{{category}}` `{{date}}`
+を置換する。
+
+## 設計
+
+- `internal/workspace` — スキャン / スラッグ化 / 作成 / テンプレート(純粋ロジック、テスト済み)
+- `internal/tui` — bubbletea による単一あいまいリスト(ジャンプ + 作成 + カテゴリ選択)
+- `main.go` — 配線(scan → TUI → 選択パスを stdout 出力)
+
+## 開発
+
+```sh
+go test ./...
+```
