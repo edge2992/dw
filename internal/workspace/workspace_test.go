@@ -3,6 +3,7 @@ package workspace
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -39,7 +40,7 @@ func TestParseProject(t *testing.T) {
 func TestRenderTemplate(t *testing.T) {
 	out := RenderTemplate(DefaultTemplate, "my-topic", "research", "2026-06-14")
 	for _, want := range []string{"title: my-topic", "category: research", "created: 2026-06-14"} {
-		if !contains(out, want) {
+		if !strings.Contains(out, want) {
 			t.Errorf("rendered template missing %q\n%s", want, out)
 		}
 	}
@@ -124,15 +125,4 @@ func TestCategories(t *testing.T) {
 			t.Errorf("unexpected category %q", c)
 		}
 	}
-}
-
-func contains(s, sub string) bool {
-	return len(s) >= len(sub) && (func() bool {
-		for i := 0; i+len(sub) <= len(s); i++ {
-			if s[i:i+len(sub)] == sub {
-				return true
-			}
-		}
-		return false
-	})()
 }

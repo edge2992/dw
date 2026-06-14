@@ -8,7 +8,6 @@ package main
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"time"
 
 	"github.com/edge2992/dw/internal/tui"
@@ -17,11 +16,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-func templatePath() string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".config", "discussion", "template.md")
-}
-
 func main() {
 	root := workspace.Root()
 	projects, err := workspace.Scan(root)
@@ -29,7 +23,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "dw: scan:", err)
 		os.Exit(1)
 	}
-	tmpl := workspace.LoadTemplate(templatePath())
+	tmpl := workspace.LoadTemplate(workspace.TemplatePath())
 
 	model := tui.New(root, tmpl, time.Now(), projects)
 	// Render the UI to stderr so stdout carries only the chosen path.

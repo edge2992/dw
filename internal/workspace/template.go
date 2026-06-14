@@ -3,8 +3,15 @@ package workspace
 import (
 	"bufio"
 	"os"
+	"path/filepath"
 	"strings"
 )
+
+// TemplatePath returns the user's project template path (~/.config/discussion/template.md).
+func TemplatePath() string {
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".config", "discussion", "template.md")
+}
 
 // DefaultTemplate is used when no template file is configured.
 const DefaultTemplate = `---

@@ -4,6 +4,7 @@ package tui
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -33,22 +34,24 @@ const (
 type rowKind int
 
 const (
-	rowProject rowKind = iota
-	rowCreate
+	rowProject  rowKind = iota // jump target; proj is set
+	rowCategory                // category choice; label is the category name
+	rowCreate                  // "create new" action; label is the slug to create
 )
 
 type row struct {
 	kind  rowKind
 	proj  workspace.Project // valid when kind==rowProject
-	label string            // for rowCreate / category rows
+	label string            // category name (rowCategory) or slug (rowCreate)
 }
 
 // Model is the bubbletea model for the dw picker.
 type Model struct {
-	root     string
-	tmpl     string
-	now      time.Time
-	projects []workspace.Project
+	root       string
+	tmpl       string
+	now        time.Time
+	projects   []workspace.Project
+	categories []string // available categories, computed once at startup
 
 	mode   mode
 	query  string
@@ -64,7 +67,14 @@ type Model struct {
 
 // New builds the initial model.
 func New(root, tmpl string, now time.Time, projects []workspace.Project) Model {
-	return Model{root: root, tmpl: tmpl, now: now, projects: projects, mode: modeBrowse}
+	return Model{
+		root:       root,
+		tmpl:       tmpl,
+		now:        now,
+		projects:   projects,
+		categories: workspace.Categories(projects),
+		mode:       modeBrowse,
+	}
 }
 
 func (m Model) Init() tea.Cmd { return nil }
@@ -74,50 +84,49 @@ func (m Model) rows() []row {
 	if m.mode == modeBrowse {
 		return browseRows(m.projects, m.query)
 	}
-	return categoryRows(m.projects, m.catQuery)
+	return categoryRows(m.categories, m.catQuery)
+}
+
+// fuzzyIndices returns the indices of targets matching query, or all indices in
+// order when query is blank.
+func fuzzyIndices(query string, targets []string) []int {
+	if strings.TrimSpace(query) == "" {
+		idx := make([]int, len(targets))
+		for i := range idx {
+			idx[i] = i
+		}
+		return idx
+	}
+	matches := fuzzy.Find(query, targets)
+	idx := make([]int, len(matches))
+	for i, mt := range matches {
+		idx[i] = mt.Index
+	}
+	return idx
 }
 
 func browseRows(projects []workspace.Project, query string) []row {
-	var rows []row
-	if strings.TrimSpace(query) == "" {
-		for _, p := range projects {
-			rows = append(rows, row{kind: rowProject, proj: p})
-		}
-		return rows
-	}
 	targets := make([]string, len(projects))
 	for i, p := range projects {
 		targets[i] = p.Category + "/" + p.Name + " " + p.Title
 	}
-	for _, mt := range fuzzy.Find(query, targets) {
-		rows = append(rows, row{kind: rowProject, proj: projects[mt.Index]})
+	var rows []row
+	for _, i := range fuzzyIndices(query, targets) {
+		rows = append(rows, row{kind: rowProject, proj: projects[i]})
 	}
-	rows = append(rows, row{kind: rowCreate, label: workspace.Slugify(query)})
+	if strings.TrimSpace(query) != "" {
+		rows = append(rows, row{kind: rowCreate, label: workspace.Slugify(query)})
+	}
 	return rows
 }
 
-func categoryRows(projects []workspace.Project, query string) []row {
-	cats := workspace.Categories(projects)
+func categoryRows(categories []string, query string) []row {
 	var rows []row
-	q := strings.TrimSpace(query)
-	if q == "" {
-		for _, c := range cats {
-			rows = append(rows, row{kind: rowProject, label: c})
-		}
-		return rows
-	}
-	for _, mt := range fuzzy.Find(query, cats) {
-		rows = append(rows, row{kind: rowProject, label: cats[mt.Index]})
+	for _, i := range fuzzyIndices(query, categories) {
+		rows = append(rows, row{kind: rowCategory, label: categories[i]})
 	}
 	// offer creating a brand-new category if the typed text isn't an exact match
-	slug := workspace.Slugify(q)
-	exact := false
-	for _, c := range cats {
-		if c == slug {
-			exact = true
-		}
-	}
-	if slug != "" && !exact {
+	if slug := workspace.Slugify(query); slug != "" && !slices.Contains(categories, slug) {
 		rows = append(rows, row{kind: rowCreate, label: slug})
 	}
 	return rows
@@ -170,10 +179,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m Model) onEnter() (tea.Model, tea.Cmd) {
 	rows := m.rows()
-	if len(rows) == 0 {
+	if m.cursor < 0 || m.cursor >= len(rows) {
 		return m, nil
 	}
-	m.clampCursor(len(rows))
 	r := rows[m.cursor]
 
 	if m.mode == modeBrowse {
@@ -204,7 +212,6 @@ func (m Model) onEnter() (tea.Model, tea.Cmd) {
 func (m Model) View() string {
 	var b strings.Builder
 	rows := m.rows()
-	m.clampCursor(len(rows))
 
 	if m.mode == modeBrowse {
 		fmt.Fprintf(&b, "%s %s\n", promptStyle.Render("discussion>"), m.query)
@@ -228,14 +235,16 @@ func (m Model) View() string {
 
 func (m Model) renderRow(r row, selected bool) string {
 	var text string
-	switch {
-	case r.kind == rowCreate && m.mode == modeBrowse:
-		text = createStyle.Render("+ 作成: ") + m.now.Format("2006-01-02") + "-" + r.label
-	case r.kind == rowCreate:
-		text = createStyle.Render("+ 新規カテゴリ: ") + r.label
-	case m.mode == modeCategory:
+	switch r.kind {
+	case rowCreate:
+		if m.mode == modeBrowse {
+			text = createStyle.Render("+ 作成: ") + m.now.Format("2006-01-02") + "-" + r.label
+		} else {
+			text = createStyle.Render("+ 新規カテゴリ: ") + r.label
+		}
+	case rowCategory:
 		text = r.label
-	default:
+	default: // rowProject
 		p := r.proj
 		date := p.Date
 		if date == "" {
