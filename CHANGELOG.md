@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.3.0](https://github.com/edge2992/dw/compare/v0.2.0...v0.3.0) (2026-06-17)
+
+
+### ⚠ BREAKING CHANGES
+
+* default root ~/Discussion -> ~/dw; DISCUSSION_ROOT -> DW_ROOT.
+
+### Features
+
+* ghq-style subcommands, move root to ~/dw ([#10](https://github.com/edge2992/dw/issues/10)) ([387666e](https://github.com/edge2992/dw/commit/387666ee4f03f3b0c68fb61aeb51b1335c77c192))
+
 ## [0.2.0](https://github.com/edge2992/dw/compare/v0.1.0...v0.2.0) (2026-06-17)
 
 
