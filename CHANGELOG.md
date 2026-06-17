@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.0](https://github.com/edge2992/dw/compare/v0.1.0...v0.2.0) (2026-06-17)
+
+
+### Features
+
+* convention-based per-category templates ([#8](https://github.com/edge2992/dw/issues/8)) ([0ebec38](https://github.com/edge2992/dw/commit/0ebec38aa98c67b5ec8c686916ee4f92900f54c0))
+
 ## 0.1.0 (2026-06-17)
 
 
