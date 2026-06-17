@@ -7,12 +7,6 @@ import (
 	"strings"
 )
 
-// TemplatePath returns the user's project template path (~/.config/discussion/template.md).
-func TemplatePath() string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".config", "discussion", "template.md")
-}
-
 // DefaultTemplate is used when no template file is configured.
 const DefaultTemplate = `---
 title: {{title}}
@@ -36,7 +30,8 @@ tags: []
 func ResolveTemplate(category string) string {
 	home, _ := os.UserHomeDir()
 	dir := filepath.Join(home, ".config", "discussion", "templates")
-	return resolveTemplate(dir, TemplatePath(), category)
+	legacy := filepath.Join(home, ".config", "discussion", "template.md")
+	return resolveTemplate(dir, legacy, category)
 }
 
 // resolveTemplate implements the search order with injectable paths for testing:
