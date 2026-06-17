@@ -4,8 +4,7 @@
   "packages": {
     ".": {
       "release-type": "go",
-      "package-name": "dw",
-      "release-as": "0.1.0"
+      "package-name": "dw"
     }
   }
 }
