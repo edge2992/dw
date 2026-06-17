@@ -78,7 +78,7 @@ func runTUI(stdout, stderr io.Writer, now time.Time) int {
 
 	model := tui.New(root, tmpl, now, projects, workspace.LastPath())
 	// Render the UI to stderr so stdout carries only the chosen path.
-	p := tea.NewProgram(model, tea.WithOutput(os.Stderr))
+	p := tea.NewProgram(model, tea.WithOutput(stderr))
 	final, err := p.Run()
 	if err != nil {
 		fmt.Fprintln(stderr, "dw:", err)
@@ -120,6 +120,10 @@ func cmdList(stdout, stderr io.Writer, args []string) int {
 	fs.SetOutput(stderr)
 	asJSON := fs.Bool("json", false, "output as JSON")
 	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if fs.NArg() > 0 {
+		fmt.Fprintf(stderr, "dw list: unexpected argument %q\n", fs.Arg(0))
 		return 2
 	}
 	projects, err := workspace.Scan(workspace.Root())

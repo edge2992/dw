@@ -38,12 +38,19 @@ go install github.com/edge2992/dw@latest
 
 `dw` is a child process, so it cannot change your shell's working directory itself.
 Instead it prints the chosen path to **stdout**, and a thin wrapper function does the
-`cd`. Add this to your `~/.zshrc` (or `~/.bashrc`):
+`cd`. Only the picker and `dw -` produce a path to `cd` into; the other subcommands
+(`list`, `root`, …) are passed straight through so their output shows up as usual.
+Add this to your `~/.zshrc` (or `~/.bashrc`):
 
 ```zsh
 function dw() {
-  local dir
-  dir=$(command dw "$@") && [ -n "$dir" ] && cd "$dir"
+  case "${1:-}" in
+    ''|-)  # picker or `dw -`: capture the chosen path and cd into it
+      local dir
+      dir=$(command dw "$@") && [ -n "$dir" ] && cd "$dir" ;;
+    *)     # list/root/version/help: run normally, output passes through
+      command dw "$@" ;;
+  esac
 }
 ```
 
@@ -51,8 +58,13 @@ Want to land in the workspace and launch Claude in one go? Add a second wrapper:
 
 ```zsh
 function dwc() {
-  local dir
-  dir=$(command dw "$@") && [ -n "$dir" ] && cd "$dir" && claude
+  case "${1:-}" in
+    ''|-)
+      local dir
+      dir=$(command dw "$@") && [ -n "$dir" ] && cd "$dir" && claude ;;
+    *)
+      command dw "$@" ;;
+  esac
 }
 ```
 

@@ -73,6 +73,20 @@ func TestCmdListEmptyRoot(t *testing.T) {
 	}
 }
 
+func TestCmdListRejectsExtraArg(t *testing.T) {
+	t.Setenv("DW_ROOT", t.TempDir())
+	var out, errb bytes.Buffer
+	if code := cmdList(&out, &errb, []string{"bogus"}); code != 2 {
+		t.Errorf("exit = %d, want 2", code)
+	}
+	if out.Len() != 0 {
+		t.Errorf("stdout should be empty, got %q", out.String())
+	}
+	if !strings.Contains(errb.String(), "unexpected argument") {
+		t.Errorf("stderr = %q", errb.String())
+	}
+}
+
 func TestCmdRoot(t *testing.T) {
 	t.Setenv("DW_ROOT", "/tmp/my-root")
 	var out bytes.Buffer
