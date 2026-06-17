@@ -67,9 +67,17 @@ Goを使わない場合は、[Releases](https://github.com/edge2992/dw/releases/
 
 `dw --version` でインストール済みのバージョンを確認できる。
 
-テンプレートは `~/.config/discussion/template.md` があればそれを使い、
-無ければ組み込みの既定テンプレートを使う。`{{title}}` `{{category}}` `{{date}}`
-を置換する。
+テンプレートはカテゴリごとに出し分けできる。作成するカテゴリに対し、次の順で
+最初に見つかったものを使う:
+
+1. `~/.config/discussion/templates/<category>.md` — カテゴリ専用
+2. `~/.config/discussion/templates/default.md` — 全カテゴリ共通の既定
+3. `~/.config/discussion/template.md` — 旧来の単一テンプレート（後方互換）
+4. 組み込みの既定テンプレート（何も置かなくても動く）
+
+いずれも `{{title}}` `{{category}}` `{{date}}` を置換する。例えば
+`~/.config/discussion/templates/research.md` を置けば research カテゴリだけ
+専用の雛形になる。
 
 ## 設計
 
