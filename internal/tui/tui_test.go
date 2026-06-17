@@ -236,7 +236,7 @@ func TestPinMarkerAndHint(t *testing.T) {
 		{Name: "2026-06-10-older", Date: "2026-06-10", Title: "older", Path: "/d/b/2026-06-10-older"},
 	}
 	// with a matching pin, the marker and the shell hint both show
-	m := New("/d", workspace.DefaultTemplate, time.Now(), projects, "/d/b/2026-06-10-older")
+	m := New("/d", time.Now(), projects, "/d/b/2026-06-10-older")
 	view := m.View()
 	if !strings.Contains(view, "←前回") {
 		t.Errorf("expected pin marker in view:\n%s", view)
@@ -246,7 +246,7 @@ func TestPinMarkerAndHint(t *testing.T) {
 	}
 
 	// without a pin, neither the marker nor the hint appear
-	m2 := New("/d", workspace.DefaultTemplate, time.Now(), projects, "")
+	m2 := New("/d", time.Now(), projects, "")
 	view2 := m2.View()
 	if strings.Contains(view2, "←前回") || strings.Contains(view2, "dw -") {
 		t.Errorf("unpinned view should have no marker/hint:\n%s", view2)
