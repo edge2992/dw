@@ -148,9 +148,15 @@ var DefaultCategories = []string{"research", "incident", "discussion", "scratch"
 // now supplies the date so callers/tests stay deterministic.
 func Create(root, category, topic string, now time.Time, tmpl string) (Project, error) {
 	date := now.Format("2006-01-02")
+	// The directory name is slugified, but the README title keeps the topic the
+	// user actually typed (casing and spaces), since that title is what the list
+	// shows on the next scan.
 	slug := Slugify(topic)
+	title := strings.TrimSpace(topic)
 	if slug == "" {
+		// no letters/numbers to slug: fall back, keeping title and dir in sync
 		slug = "untitled"
+		title = "untitled"
 	}
 	name := date + "-" + slug
 	path := filepath.Join(root, category, name)
@@ -162,7 +168,7 @@ func Create(root, category, topic string, now time.Time, tmpl string) (Project, 
 		if !os.IsNotExist(err) {
 			return Project{}, err
 		}
-		content := RenderTemplate(tmpl, slug, category, date)
+		content := RenderTemplate(tmpl, title, category, date)
 		if err := os.WriteFile(readme, []byte(content), 0o644); err != nil {
 			return Project{}, err
 		}

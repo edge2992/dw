@@ -1,6 +1,8 @@
 # dw — discussion workspace picker
 
 ![coverage](.github/badges/coverage.svg)
+[![release](https://img.shields.io/github/v/release/edge2992/dw)](https://github.com/edge2992/dw/releases/latest)
+[![license](https://img.shields.io/github/license/edge2992/dw)](LICENSE)
 
 **Spin up a dated workspace for every topic you explore with Claude — then fuzzy-jump back to any of them.**
 
@@ -33,6 +35,11 @@ $ dw
 ```sh
 go install github.com/edge2992/dw@latest
 ```
+
+Don't use Go? Grab a prebuilt binary for your OS/arch from the
+[Releases](https://github.com/edge2992/dw/releases/latest) page (linux / macOS /
+windows × amd64 / arm64, with `checksums.txt`). Check the installed version with
+`dw version`.
 
 ## Shell integration
 
@@ -112,9 +119,15 @@ offered when empty are `research`, `incident`, `discussion`, `scratch`.
 ## Configuration
 
 - **`DW_ROOT`** — workspace root. Defaults to `~/dw`.
-- **Template** — if `~/.config/discussion/template.md` exists it is used for new
-  READMEs, otherwise a built-in default is used. Placeholders: `{{title}}`,
-  `{{category}}`, `{{date}}`.
+- **Templates** — picked per category, first match wins:
+  1. `~/.config/discussion/templates/<category>.md` — per-category
+  2. `~/.config/discussion/templates/default.md` — shared default
+  3. `~/.config/discussion/template.md` — legacy single template (back-compat)
+  4. built-in default (works with nothing configured)
+
+  All substitute `{{title}}`, `{{category}}`, `{{date}}`. Drop a
+  `~/.config/discussion/templates/research.md` to give just the `research`
+  category its own scaffold.
 - **Last-workspace cache** — recorded under `os.UserCacheDir()` (`~/Library/Caches/dw/last`
   on macOS, `~/.cache/dw/last` on Linux). Drives both the top-of-list pin and `dw -`.
 
@@ -150,6 +163,15 @@ make        # all of the above
 - **Lint/Format**: golangci-lint v2 (config `.golangci.yml`, standard set + misspell/revive; formatters gofumpt/goimports).
 - **Hooks**: pre-commit framework (`.pre-commit-config.yaml`). A global pre-commit hook delegates here after gitleaks, so `pre-commit install` is not required. Setup: `uv tool install pre-commit`, `brew install golangci-lint`.
 - **CI**: GitHub Actions (`.github/workflows/ci.yml`) runs build / test -race / golangci-lint.
+
+## Release
+
+Versioning is automated. [Release Please](https://github.com/googleapis/release-please)
+parses [Conventional Commits](https://www.conventionalcommits.org/) to decide the next
+version: every push to `main` updates a **release PR** (with CHANGELOG), and merging it
+creates the semver tag and GitHub Release. [GoReleaser](https://goreleaser.com/) then
+attaches prebuilt binaries for each OS/arch (`.github/workflows/release.yml`). `feat`
+bumps the minor, `fix` the patch.
 
 ## License
 

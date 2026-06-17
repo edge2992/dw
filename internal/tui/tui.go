@@ -22,6 +22,7 @@ var (
 	selStyle    = lipgloss.NewStyle().Reverse(true)
 	dimStyle    = lipgloss.NewStyle().Faint(true)
 	createStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("2")) // green
+	pinStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("4")) // blue
 	promptStyle = lipgloss.NewStyle().Bold(true)
 )
 
@@ -49,7 +50,6 @@ type row struct {
 // Model is the bubbletea model for the dw picker.
 type Model struct {
 	root       string
-	tmpl       string
 	now        time.Time
 	projects   []workspace.Project
 	categories []string // available categories, computed once at startup
@@ -62,6 +62,9 @@ type Model struct {
 	pendingTopic string
 	catQuery     string
 
+	lastPath string // previously chosen project, marked "←前回" in the list
+	hasPin   bool   // whether lastPath actually matched a listed project
+
 	Result string // chosen/created absolute path; empty means abort
 	Err    error
 }
@@ -69,22 +72,25 @@ type Model struct {
 // New builds the initial model. lastPath, when it matches a project, is pinned
 // to the top of the browse list so the most common move — resuming the previous
 // workspace — is one Enter away; pass "" to disable pinning.
-func New(root, tmpl string, now time.Time, projects []workspace.Project, lastPath string) Model {
+func New(root string, now time.Time, projects []workspace.Project, lastPath string) Model {
+	pinned, ok := pinLast(projects, lastPath)
 	return Model{
 		root:       root,
-		tmpl:       tmpl,
 		now:        now,
-		projects:   pinLast(projects, lastPath),
+		projects:   pinned,
 		categories: workspace.Categories(projects),
 		mode:       modeBrowse,
+		lastPath:   lastPath,
+		hasPin:     ok,
 	}
 }
 
 // pinLast returns projects with the lastPath entry moved to the front, leaving
-// the input slice untouched. A blank or unmatched lastPath returns it as-is.
-func pinLast(projects []workspace.Project, lastPath string) []workspace.Project {
+// the input slice untouched, and reports whether it matched. A blank or
+// unmatched lastPath returns the input as-is with ok=false.
+func pinLast(projects []workspace.Project, lastPath string) ([]workspace.Project, bool) {
 	if lastPath == "" {
-		return projects
+		return projects, false
 	}
 	for i, p := range projects {
 		if p.Path != lastPath {
@@ -94,9 +100,9 @@ func pinLast(projects []workspace.Project, lastPath string) []workspace.Project 
 		out = append(out, p)
 		out = append(out, projects[:i]...)
 		out = append(out, projects[i+1:]...)
-		return out
+		return out, true
 	}
-	return projects
+	return projects, false
 }
 
 // Init implements tea.Model.
@@ -236,8 +242,10 @@ func (m Model) onEnter() (tea.Model, tea.Cmd) {
 		}
 	}
 
-	// modeCategory: r.label is the category (existing or new)
-	p, err := workspace.Create(m.root, r.label, m.pendingTopic, m.now, m.tmpl)
+	// modeCategory: r.label is the category (existing or new). Resolve the
+	// template now that the category is known so per-category templates apply.
+	tmpl := workspace.ResolveTemplate(r.label)
+	p, err := workspace.Create(m.root, r.label, m.pendingTopic, m.now, tmpl)
 	if err != nil {
 		m.Err = err
 		return m, tea.Quit
@@ -270,7 +278,13 @@ func (m Model) View() string {
 	if m.mode == modeCategory {
 		esc = "esc 戻る"
 	}
-	b.WriteString(dimStyle.Render("↑↓ 選択  enter 決定  " + esc))
+	help := "↑↓ 選択  enter 決定  " + esc
+	// Surface the shell shortcut only when there is a pinned project to return
+	// to, so the "←前回" marker is paired with how to jump there without the UI.
+	if m.mode == modeBrowse && m.hasPin {
+		help += "  ·  dw - で前回へ"
+	}
+	b.WriteString(dimStyle.Render(help))
 	b.WriteString("\n")
 	return b.String()
 }
@@ -301,7 +315,14 @@ func (m Model) renderRow(r row, selected bool) string {
 		prefix = "› "
 		text = selStyle.Render(text)
 	}
-	out := prefix + text + "\n"
+	line := prefix + text
+	// Mark the previously chosen project so its presence at the top reads as
+	// "resume last" rather than an oddly old entry. Kept outside selStyle so the
+	// marker stays its own color even when the row is highlighted.
+	if r.kind == rowProject && m.lastPath != "" && r.proj.Path == m.lastPath {
+		line += pinStyle.Render(" ←前回")
+	}
+	out := line + "\n"
 	if selected && r.kind == rowProject {
 		if meta := metaLine(r.proj); meta != "" {
 			out += dimStyle.Render("    "+meta) + "\n"

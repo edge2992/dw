@@ -23,6 +23,11 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
+// version is the build version, injected via -ldflags at release time
+// (see .goreleaser.yaml). Plain `go install`/`go build` leave it as "dev",
+// in which case cmdVersion falls back to the module version from the build info.
+var version = "dev"
+
 const usage = `dw — discussion workspace picker
 
 Usage:
@@ -74,9 +79,8 @@ func runTUI(stdout, stderr io.Writer, now time.Time) int {
 		fmt.Fprintln(stderr, "dw: scan:", err)
 		return 1
 	}
-	tmpl := workspace.LoadTemplate(workspace.TemplatePath())
 
-	model := tui.New(root, tmpl, now, projects, workspace.LastPath())
+	model := tui.New(root, now, projects, workspace.LastPath())
 	// Render the UI to stderr so stdout carries only the chosen path.
 	p := tea.NewProgram(model, tea.WithOutput(stderr))
 	final, err := p.Run()
@@ -155,11 +159,15 @@ func cmdRoot(stdout io.Writer) int {
 	return 0
 }
 
-// cmdVersion prints the build version (`dw version`).
+// cmdVersion prints the build version (`dw version`). Released binaries carry
+// the version injected via -ldflags; for `go install module@version` builds it
+// falls back to the module version recorded in the build info.
 func cmdVersion(stdout io.Writer) int {
-	v := "dev"
-	if bi, ok := debug.ReadBuildInfo(); ok && bi.Main.Version != "" {
-		v = bi.Main.Version // populated by `go install module@version`
+	v := version
+	if v == "dev" {
+		if bi, ok := debug.ReadBuildInfo(); ok && bi.Main.Version != "" && bi.Main.Version != "(devel)" {
+			v = bi.Main.Version
+		}
 	}
 	fmt.Fprintln(stdout, "dw", v)
 	return 0
