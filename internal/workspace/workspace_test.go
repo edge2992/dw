@@ -182,6 +182,20 @@ func TestSaveAndLoadLast(t *testing.T) {
 	}
 }
 
+func TestRootEnvAndDefault(t *testing.T) {
+	// explicit DW_ROOT wins
+	t.Setenv("DW_ROOT", "/tmp/custom-root")
+	if got := Root(); got != "/tmp/custom-root" {
+		t.Errorf("Root() with DW_ROOT = %q, want /tmp/custom-root", got)
+	}
+	// empty DW_ROOT falls back to ~/dw
+	t.Setenv("DW_ROOT", "")
+	t.Setenv("HOME", "/tmp/home")
+	if got := Root(); got != filepath.Join("/tmp/home", "dw") {
+		t.Errorf("Root() default = %q, want /tmp/home/dw", got)
+	}
+}
+
 func TestCategories(t *testing.T) {
 	ps := []Project{{Category: "custom"}, {Category: "research"}}
 	cats := Categories(ps)

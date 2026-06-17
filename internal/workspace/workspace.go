@@ -14,26 +14,26 @@ import (
 
 // Project is a single discussion workspace directory.
 type Project struct {
-	Category string // e.g. "research"
-	Name     string // directory name, e.g. "2026-06-13-pc-setup"
-	Topic    string // slug without the date prefix, e.g. "pc-setup"
-	Date     string // "2026-06-13", or "" when the dir has no date prefix
-	Title    string // title from README frontmatter, falls back to Topic
-	Status   string // status from README frontmatter, e.g. "active"
-	Tags     string // raw tags from README frontmatter, e.g. "[gpu, linux]"
-	Created  string // created date from README frontmatter
-	Path     string // absolute path
+	Category string `json:"category"` // e.g. "research"
+	Name     string `json:"name"`     // directory name, e.g. "2026-06-13-pc-setup"
+	Topic    string `json:"topic"`    // slug without the date prefix, e.g. "pc-setup"
+	Date     string `json:"date"`     // "2026-06-13", or "" when the dir has no date prefix
+	Title    string `json:"title"`    // title from README frontmatter, falls back to Topic
+	Status   string `json:"status"`   // status from README frontmatter, e.g. "active"
+	Tags     string `json:"tags"`     // raw tags from README frontmatter, e.g. "[gpu, linux]"
+	Created  string `json:"created"`  // created date from README frontmatter
+	Path     string `json:"path"`     // absolute path
 }
 
 var datePrefix = regexp.MustCompile(`^(\d{4}-\d{2}-\d{2})-(.*)$`)
 
-// Root returns the workspace root, honoring $DISCUSSION_ROOT and defaulting to ~/Discussion.
+// Root returns the workspace root, honoring $DW_ROOT and defaulting to ~/dw.
 func Root() string {
-	if r := os.Getenv("DISCUSSION_ROOT"); r != "" {
+	if r := os.Getenv("DW_ROOT"); r != "" {
 		return r
 	}
 	home, _ := os.UserHomeDir()
-	return filepath.Join(home, "Discussion")
+	return filepath.Join(home, "dw")
 }
 
 var slugDashes = regexp.MustCompile(`-+`)
