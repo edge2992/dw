@@ -16,7 +16,17 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
+// version is the build version, injected via -ldflags at release time
+// (see .goreleaser.yaml). Plain `go install`/`go build` leave it as "dev".
+var version = "dev"
+
 func main() {
+	// `dw --version` / `dw -v` prints the build version and exits.
+	if len(os.Args) > 1 && (os.Args[1] == "--version" || os.Args[1] == "-v") {
+		fmt.Println(version)
+		return
+	}
+
 	// `dw -` jumps straight back to the last chosen workspace, no UI.
 	if len(os.Args) > 1 && os.Args[1] == "-" {
 		last := workspace.LastPath()

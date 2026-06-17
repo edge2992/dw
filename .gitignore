@@ -1,3 +1,6 @@
 # build artifacts
 /dw
 *.out
+
+# goreleaser output
+/dist/
