@@ -62,7 +62,7 @@ type Model struct {
 	pendingTopic string
 	catQuery     string
 
-	lastPath string // previously chosen project, marked "←前回" in the list
+	lastPath string // previously chosen project, marked "← last" in the list
 	hasPin   bool   // whether lastPath actually matched a listed project
 
 	Result string // chosen/created absolute path; empty means abort
@@ -266,7 +266,7 @@ func (m Model) View() string {
 	}
 
 	if len(rows) == 0 {
-		b.WriteString(dimStyle.Render("  (該当なし — 文字を入力して新規作成)\n"))
+		b.WriteString(dimStyle.Render("  (no matches — type to create new)\n"))
 	}
 
 	start, end := windowBounds(m.cursor, len(rows), windowSize)
@@ -274,15 +274,15 @@ func (m Model) View() string {
 		b.WriteString(m.renderRow(rows[i], i == m.cursor))
 	}
 	b.WriteString("\n")
-	esc := "esc 中止"
+	esc := "esc cancel"
 	if m.mode == modeCategory {
-		esc = "esc 戻る"
+		esc = "esc back"
 	}
-	help := "↑↓ 選択  enter 決定  " + esc
+	help := "↑↓ select  enter confirm  " + esc
 	// Surface the shell shortcut only when there is a pinned project to return
-	// to, so the "←前回" marker is paired with how to jump there without the UI.
+	// to, so the "← last" marker is paired with how to jump there without the UI.
 	if m.mode == modeBrowse && m.hasPin {
-		help += "  ·  dw - で前回へ"
+		help += "  ·  dw - jumps to last"
 	}
 	b.WriteString(dimStyle.Render(help))
 	b.WriteString("\n")
@@ -294,9 +294,9 @@ func (m Model) renderRow(r row, selected bool) string {
 	switch r.kind {
 	case rowCreate:
 		if m.mode == modeBrowse {
-			text = createStyle.Render("+ 作成: ") + m.now.Format("2006-01-02") + "-" + r.label
+			text = createStyle.Render("+ create: ") + m.now.Format("2006-01-02") + "-" + r.label
 		} else {
-			text = createStyle.Render("+ 新規カテゴリ: ") + r.label
+			text = createStyle.Render("+ new category: ") + r.label
 		}
 	case rowCategory:
 		text = r.label
@@ -320,7 +320,7 @@ func (m Model) renderRow(r row, selected bool) string {
 	// "resume last" rather than an oddly old entry. Kept outside selStyle so the
 	// marker stays its own color even when the row is highlighted.
 	if r.kind == rowProject && m.lastPath != "" && r.proj.Path == m.lastPath {
-		line += pinStyle.Render(" ←前回")
+		line += pinStyle.Render(" ← last")
 	}
 	out := line + "\n"
 	if selected && r.kind == rowProject {

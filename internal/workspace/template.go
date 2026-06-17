@@ -18,11 +18,11 @@ tags: []
 
 # {{title}}
 
-## 背景 / 目的
+## Background / Goal
 
-## 調査ログ
+## Research Log
 
-## 結論 / 次アクション
+## Conclusion / Next Actions
 `
 
 // ResolveTemplate picks the template for a category using the convention-based
