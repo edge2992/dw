@@ -2,12 +2,11 @@
 
 ![coverage](.github/badges/coverage.svg)
 
-**Create and jump across Claude discussion / research workspaces, ghq-style.**
+**Spin up a dated workspace for every topic you explore with Claude — then fuzzy-jump back to any of them.**
 
-`dw` brings the `ghq` "just make the directory for me" experience together with the
-`fzf` "fuzzy jump anywhere" feel — but for non-git research and discussion folders.
-Type a topic, pick a category, and `dw` lays out a dated, frontmatter-indexed
-workspace for you. Next time, fuzzy-find it and `cd` straight in.
+`dw` gives each topic its own `<category>/<YYYY-MM-DD>-<topic>/` folder with a
+frontmatter README. No naming ceremony: type a topic, pick a category, and start
+working. Later, fuzzy-find it and `cd` straight in.
 
 ```text
 $ dw
@@ -19,10 +18,10 @@ $ dw
 
 ## Features
 
-- **ghq-style auto-layout** — workspaces live at `<root>/<category>/<YYYY-MM-DD>-<topic-slug>/`, created for you.
+- **Dated auto-layout** — workspaces live at `<root>/<category>/<YYYY-MM-DD>-<topic-slug>/`, created for you.
 - **Create on demand, no `create` command** — type a topic; if nothing matches, pick a category and `dw` makes it. Categories are created on the fly too.
 - **Category chosen after the topic** — write what you're thinking about first, file it second.
-- **fzf-style fuzzy jump** — fuzzy-match across `category/name` and titles, newest first.
+- **Fuzzy jump** — fuzzy-match across `category/name` and titles, newest first, fzf-style.
 - **Resume instantly** — your last workspace is pinned to the top; `dw -` jumps to it with no UI.
 - **Frontmatter-aware** — shows `status` / `tags` / `created` from each README under the selection.
 - **Scriptable** — `dw list` is a clean, pipeable stream (`dw list --json` for machine consumption).
