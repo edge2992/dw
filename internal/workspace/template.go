@@ -31,13 +31,30 @@ tags: []
 ## 結論 / 次アクション
 `
 
-// LoadTemplate reads the template file, falling back to DefaultTemplate.
-func LoadTemplate(path string) string {
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return DefaultTemplate
+// ResolveTemplate picks the template for a category using the convention-based
+// search order, falling back to the built-in DefaultTemplate.
+func ResolveTemplate(category string) string {
+	home, _ := os.UserHomeDir()
+	dir := filepath.Join(home, ".config", "discussion", "templates")
+	return resolveTemplate(dir, TemplatePath(), category)
+}
+
+// resolveTemplate implements the search order with injectable paths for testing:
+//  1. <dir>/<category>.md  (category-specific)
+//  2. <dir>/default.md     (shared default)
+//  3. legacyPath           (~/.config/discussion/template.md, backward compat)
+//  4. DefaultTemplate      (built-in)
+func resolveTemplate(dir, legacyPath, category string) string {
+	for _, p := range []string{
+		filepath.Join(dir, category+".md"),
+		filepath.Join(dir, "default.md"),
+		legacyPath,
+	} {
+		if b, err := os.ReadFile(p); err == nil {
+			return string(b)
+		}
 	}
-	return string(b)
+	return DefaultTemplate
 }
 
 // RenderTemplate fills the {{title}}/{{category}}/{{date}} placeholders.
