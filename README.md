@@ -139,3 +139,7 @@ make        # all of the above
 - **Lint/Format**: golangci-lint v2 (config `.golangci.yml`, standard set + misspell/revive; formatters gofumpt/goimports).
 - **Hooks**: pre-commit framework (`.pre-commit-config.yaml`). A global pre-commit hook delegates here after gitleaks, so `pre-commit install` is not required. Setup: `uv tool install pre-commit`, `brew install golangci-lint`.
 - **CI**: GitHub Actions (`.github/workflows/ci.yml`) runs build / test -race / golangci-lint.
+
+## License
+
+[MIT](LICENSE) © edge2992
