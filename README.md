@@ -1,6 +1,5 @@
 # dw — discussion workspace picker
 
-![coverage](.github/badges/coverage.svg)
 [![release](https://img.shields.io/github/v/release/edge2992/dw)](https://github.com/edge2992/dw/releases/latest)
 [![license](https://img.shields.io/github/license/edge2992/dw)](LICENSE)
 
