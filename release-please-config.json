@@ -4,7 +4,8 @@
   "packages": {
     ".": {
       "release-type": "go",
-      "package-name": "dw"
+      "package-name": "dw",
+      "bump-minor-pre-major": true
     }
   }
 }
