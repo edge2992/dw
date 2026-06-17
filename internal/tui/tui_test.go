@@ -268,3 +268,43 @@ func TestMetaLine(t *testing.T) {
 		t.Fatalf("empty project should yield empty meta, got %q", got)
 	}
 }
+
+func TestCreateUsesCategoryTemplate(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	tmplDir := filepath.Join(home, ".config", "discussion", "templates")
+	if err := os.MkdirAll(tmplDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cat := workspace.DefaultCategories[0] // first default category offered
+	if err := os.WriteFile(filepath.Join(tmplDir, cat+".md"), []byte("CATEGORY BODY"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	root := t.TempDir()
+	now := time.Date(2026, 6, 14, 0, 0, 0, 0, time.UTC)
+	m := New(root, now, nil, "")
+
+	// browse: type a topic, move to the create row
+	m = typeStr(m, "topic")
+	rows := m.rows()
+	for i := 0; i < len(rows)-1; i++ {
+		m = send(m, "down")
+	}
+	m = send(m, "enter") // -> category mode
+	// confirm the first default category (cat)
+	m = send(m, "enter")
+
+	if m.Result == "" {
+		t.Fatalf("create did not produce a Result path (Err=%v)", m.Err)
+	}
+
+	b, err := os.ReadFile(filepath.Join(m.Result, "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(b)
+	if got != "CATEGORY BODY" {
+		t.Fatalf("README = %q, want category template body", got)
+	}
+}
