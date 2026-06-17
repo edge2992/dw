@@ -50,7 +50,6 @@ type row struct {
 // Model is the bubbletea model for the dw picker.
 type Model struct {
 	root       string
-	tmpl       string
 	now        time.Time
 	projects   []workspace.Project
 	categories []string // available categories, computed once at startup
@@ -73,11 +72,10 @@ type Model struct {
 // New builds the initial model. lastPath, when it matches a project, is pinned
 // to the top of the browse list so the most common move — resuming the previous
 // workspace — is one Enter away; pass "" to disable pinning.
-func New(root, tmpl string, now time.Time, projects []workspace.Project, lastPath string) Model {
+func New(root string, now time.Time, projects []workspace.Project, lastPath string) Model {
 	pinned, ok := pinLast(projects, lastPath)
 	return Model{
 		root:       root,
-		tmpl:       tmpl,
 		now:        now,
 		projects:   pinned,
 		categories: workspace.Categories(projects),
@@ -244,8 +242,10 @@ func (m Model) onEnter() (tea.Model, tea.Cmd) {
 		}
 	}
 
-	// modeCategory: r.label is the category (existing or new)
-	p, err := workspace.Create(m.root, r.label, m.pendingTopic, m.now, m.tmpl)
+	// modeCategory: r.label is the category (existing or new). Resolve the
+	// template now that the category is known so per-category templates apply.
+	tmpl := workspace.ResolveTemplate(r.label)
+	p, err := workspace.Create(m.root, r.label, m.pendingTopic, m.now, tmpl)
 	if err != nil {
 		m.Err = err
 		return m, tea.Quit

@@ -44,9 +44,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "dw: scan:", err)
 		os.Exit(1)
 	}
-	tmpl := workspace.LoadTemplate(workspace.TemplatePath())
-
-	model := tui.New(root, tmpl, time.Now(), projects, workspace.LastPath())
+	model := tui.New(root, time.Now(), projects, workspace.LastPath())
 	// Render the UI to stderr so stdout carries only the chosen path.
 	p := tea.NewProgram(model, tea.WithOutput(os.Stderr))
 	final, err := p.Run()
