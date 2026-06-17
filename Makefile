@@ -13,7 +13,7 @@ test:
 
 cover:
 	go test -coverprofile=coverage.out ./...
-	bash scripts/coverage-badge.sh coverage.out .github/badges/coverage.svg
+	go tool cover -func=coverage.out | tail -1
 
 build:
 	go build ./...
