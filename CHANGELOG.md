@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/edge2992/dw/compare/v0.3.0...v0.4.0) (2026-06-17)
+
+
+### Features
+
+* switch dw runtime flow to English ([#14](https://github.com/edge2992/dw/issues/14)) ([79b687c](https://github.com/edge2992/dw/commit/79b687caa627d38c23f5feb822e279c1313bf1ba))
+
 ## [0.3.0](https://github.com/edge2992/dw/compare/v0.2.0...v0.3.0) (2026-06-17)
 
 
