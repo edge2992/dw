@@ -15,6 +15,7 @@ import (
 	"io"
 	"os"
 	"runtime/debug"
+	"strings"
 	"time"
 
 	"github.com/edge2992/dw/internal/tui"
@@ -31,17 +32,20 @@ var version = "dev"
 const usage = `dw — discussion workspace picker
 
 Usage:
-  dw                Open the interactive picker (fuzzy list + create-on-demand)
-  dw -              Jump to the last workspace (prints its path)
-  dw list [--json]  List workspaces (category/name, or JSON)
-  dw root           Print the workspace root
-  dw version        Print the version
-  dw help           Show this help
+  dw                       Open the interactive picker (fuzzy list + create-on-demand)
+  dw -                     Jump to the last workspace (prints its path)
+  dw new <topic> -c <cat>  Create a workspace non-interactively (prints its path)
+  dw list [--json]         List workspaces (category/name, or JSON)
+  dw root                  Print the workspace root
+  dw init <zsh|bash>       Print the shell wrapper that cd's into chosen paths
+  dw version               Print the version
+  dw help                  Show this help
 
 Environment:
   DW_ROOT   Workspace root (default ~/dw)
 
-dw prints the chosen path to stdout; cd is done by a shell wrapper (see README).
+dw prints the chosen path to stdout; cd is done by a shell wrapper.
+Enable it once with:  eval "$(dw init zsh)"   (or bash)
 `
 
 func main() { os.Exit(run(os.Args, os.Stdout, os.Stderr, time.Now())) }
@@ -55,10 +59,14 @@ func run(argv []string, stdout, stderr io.Writer, now time.Time) int {
 	switch argv[1] {
 	case "-":
 		return cmdJump(stdout, stderr)
+	case "new":
+		return cmdNew(stdout, stderr, argv[2:], now)
 	case "list":
 		return cmdList(stdout, stderr, argv[2:])
 	case "root":
 		return cmdRoot(stdout)
+	case "init":
+		return cmdInit(stdout, stderr, argv[2:])
 	case "version", "--version", "-v":
 		return cmdVersion(stdout)
 	case "help", "--help", "-h":
@@ -116,6 +124,87 @@ func cmdJump(stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintln(stdout, last)
 	return 0
+}
+
+// cmdNew creates a workspace non-interactively and prints its path, so the
+// shell wrapper can cd into it (`dw new <topic> --category <cat>`). It is the
+// scriptable counterpart of the picker's create-on-demand flow, sharing the
+// same workspace.Create core. We hand-parse args (instead of flag.FlagSet) so
+// the topic and -c/--category can appear in any order.
+func cmdNew(stdout, stderr io.Writer, args []string, now time.Time) int {
+	const usage = "Usage: dw new <topic> --category <cat>"
+	var category string
+	var topicParts []string
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case a == "--category" || a == "-c":
+			if i+1 >= len(args) {
+				fmt.Fprintf(stderr, "dw new: %s needs a value\n%s\n", a, usage)
+				return 2
+			}
+			i++
+			category = args[i]
+		case strings.HasPrefix(a, "--category="):
+			category = strings.TrimPrefix(a, "--category=")
+		case strings.HasPrefix(a, "-c="):
+			category = strings.TrimPrefix(a, "-c=")
+		default:
+			topicParts = append(topicParts, a)
+		}
+	}
+	topic := strings.TrimSpace(strings.Join(topicParts, " "))
+	if topic == "" {
+		fmt.Fprintf(stderr, "dw new: missing topic\n%s\n", usage)
+		return 2
+	}
+	if strings.TrimSpace(category) == "" {
+		fmt.Fprintf(stderr, "dw new: --category is required\n%s\n", usage)
+		return 2
+	}
+	root := workspace.Root()
+	tmpl := workspace.ResolveTemplate(category)
+	p, err := workspace.Create(root, category, topic, now, tmpl)
+	if err != nil {
+		fmt.Fprintln(stderr, "dw:", err)
+		return 1
+	}
+	// Remember the choice so `dw -` and the startup pin can resume it next time.
+	_ = workspace.SaveLast(p.Path)
+	fmt.Fprintln(stdout, p.Path)
+	return 0
+}
+
+// shellInit is the wrapper function dw prints from `dw init`. It captures the
+// path dw emits for the path-returning subcommands (bare dw, "-", new) and cd's into
+// it; every other subcommand passes through untouched. zsh and bash share this
+// POSIX-compatible body.
+const shellInit = `dw() {
+  case "${1:-}" in
+    ''|-|new)
+      local dir
+      dir="$(command dw "$@")" && [ -n "$dir" ] && cd "$dir" ;;
+    *)
+      command dw "$@" ;;
+  esac
+}
+`
+
+// cmdInit prints the shell wrapper for the requested shell (`dw init zsh|bash`),
+// so users can `eval "$(dw init zsh)"` instead of hand-copying it.
+func cmdInit(stdout, stderr io.Writer, args []string) int {
+	if len(args) != 1 {
+		fmt.Fprintln(stderr, "dw init: specify a shell\nUsage: dw init <zsh|bash>")
+		return 2
+	}
+	switch args[0] {
+	case "zsh", "bash":
+		fmt.Fprint(stdout, shellInit)
+		return 0
+	default:
+		fmt.Fprintf(stderr, "dw init: unsupported shell %q (supported: zsh, bash)\n", args[0])
+		return 2
+	}
 }
 
 // cmdList prints every workspace as "category/name" lines, or as JSON with --json.

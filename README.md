@@ -25,7 +25,7 @@ $ dw
 - **Fuzzy jump** — fuzzy-match across `category/name` and titles, newest first, fzf-style.
 - **Resume instantly** — your last workspace is pinned to the top; `dw -` jumps to it with no UI.
 - **Frontmatter-aware** — shows `status` / `tags` / `created` from each README under the selection.
-- **Scriptable** — `dw list` is a clean, pipeable stream (`dw list --json` for machine consumption).
+- **Scriptable primitives** — the TUI is sugar over plain commands: `dw new` creates, `dw list` (`--json`) streams, so you can compose your own flow (`dw list --json | fzf`) instead of the picker.
 - **Unicode-safe slugs** — Japanese and other scripts survive slugification (`機械学習 調査` → `機械学習-調査`).
 - **Zero-config** — defaults to `~/dw`; one env var to relocate.
 
@@ -44,17 +44,26 @@ windows × amd64 / arm64, with `checksums.txt`). Check the installed version wit
 
 `dw` is a child process, so it cannot change your shell's working directory itself.
 Instead it prints the chosen path to **stdout**, and a thin wrapper function does the
-`cd`. Only the picker and `dw -` produce a path to `cd` into; the other subcommands
-(`list`, `root`, …) are passed straight through so their output shows up as usual.
-Add this to your `~/.zshrc` (or `~/.bashrc`):
+`cd`. The path-producing subcommands (the picker, `dw -`, `dw new`) are captured and
+`cd`'d into; the others (`list`, `root`, …) pass straight through so their output
+shows up as usual.
+
+Let `dw` generate the wrapper for you — add this to your `~/.zshrc` (or `~/.bashrc`):
 
 ```zsh
-function dw() {
+eval "$(dw init zsh)"   # use `dw init bash` for bash
+```
+
+`dw init` prints the function below; eval'ing it keeps the integration in sync with
+the binary, so there's nothing to hand-copy:
+
+```zsh
+dw() {
   case "${1:-}" in
-    ''|-)  # picker or `dw -`: capture the chosen path and cd into it
+    ''|-|new)
       local dir
-      dir=$(command dw "$@") && [ -n "$dir" ] && cd "$dir" ;;
-    *)     # list/root/version/help: run normally, output passes through
+      dir="$(command dw "$@")" && [ -n "$dir" ] && cd "$dir" ;;
+    *)
       command dw "$@" ;;
   esac
 }
@@ -65,7 +74,7 @@ Want to land in the workspace and launch Claude in one go? Add a second wrapper:
 ```zsh
 function dwc() {
   case "${1:-}" in
-    ''|-)
+    ''|-|new)
       local dir
       dir=$(command dw "$@") && [ -n "$dir" ] && cd "$dir" && claude ;;
     *)
@@ -77,10 +86,18 @@ function dwc() {
 ## Quickstart
 
 ```sh
-dw                 # open the picker: fuzzy-find, or type a new topic to create one
-dw -               # jump straight back to your last workspace
-dw list            # print every workspace as category/name
-dw root            # print the workspace root
+dw                              # open the picker: fuzzy-find, or type a new topic to create one
+dw -                           # jump straight back to your last workspace
+dw new "my topic" -c research  # create a workspace non-interactively and cd in
+dw list                        # print every workspace as category/name
+dw root                        # print the workspace root
+```
+
+Prefer to compose your own picker? The interactive TUI is just sugar over the
+primitives — wire `dw list` to your favourite fuzzy finder instead:
+
+```sh
+cd "$(dw list --json | jq -r '.[].path' | fzf)"
 ```
 
 In the picker:
@@ -96,9 +113,11 @@ In the picker:
 |---|---|
 | `dw` | Open the interactive picker (fuzzy list + create-on-demand). |
 | `dw -` | Jump to the last workspace; prints its path. |
+| `dw new <topic> -c <cat>` | Create a workspace non-interactively; prints its path. |
 | `dw list` | List workspaces as `category/name`, one per line. |
 | `dw list --json` | List workspaces as a JSON array (includes absolute `path`). |
 | `dw root` | Print the resolved workspace root. |
+| `dw init <zsh\|bash>` | Print the shell wrapper to `eval` (see Shell integration). |
 | `dw version` | Print the version. |
 | `dw help` / `-h` | Show usage. |
 
@@ -148,7 +167,7 @@ mv ~/Discussion ~/dw          # adopt the new default
 
 - `internal/workspace` — scanning / slugification / creation / templates / last-path persistence (pure logic, tested).
 - `internal/tui` — the single bubbletea fuzzy list (jump + create + category select + pin).
-- `main.go` — subcommand dispatch (`run()`); wires `dw -`, `list`, `root`, `version`, `help`, and the picker.
+- `main.go` — subcommand dispatch (`run()`); wires `dw -`, `new`, `list`, `root`, `init`, `version`, `help`, and the picker. `dw new` and the picker share the same `workspace.Create` core.
 
 ## Development
 
