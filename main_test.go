@@ -200,6 +200,35 @@ func TestCmdNewMissingTopic(t *testing.T) {
 	}
 }
 
+func TestCmdNewUnslugifiableTopic(t *testing.T) {
+	root := newEnv(t)
+	var out, errb bytes.Buffer
+	// "!!!" slugifies to "", which the picker refuses to create — cmdNew must too.
+	if code := cmdNew(&out, &errb, []string{"!!!", "--category", "research"}, time.Now()); code != 2 {
+		t.Errorf("exit = %d, want 2", code)
+	}
+	if !strings.Contains(errb.String(), "topic") {
+		t.Errorf("stderr = %q, want it to mention topic", errb.String())
+	}
+	if entries, _ := os.ReadDir(root); len(entries) != 0 {
+		t.Errorf("nothing should be created, got %v", entries)
+	}
+}
+
+func TestCmdNewUnslugifiableCategory(t *testing.T) {
+	root := newEnv(t)
+	var out, errb bytes.Buffer
+	if code := cmdNew(&out, &errb, []string{"hello", "--category", "!!!"}, time.Now()); code != 2 {
+		t.Errorf("exit = %d, want 2", code)
+	}
+	if !strings.Contains(errb.String(), "category") {
+		t.Errorf("stderr = %q, want it to mention category", errb.String())
+	}
+	if entries, _ := os.ReadDir(root); len(entries) != 0 {
+		t.Errorf("nothing should be created, got %v", entries)
+	}
+}
+
 func TestCmdInit(t *testing.T) {
 	for _, shell := range []string{"zsh", "bash"} {
 		var out, errb bytes.Buffer

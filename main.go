@@ -4,8 +4,10 @@
 // <category>/<YYYY-MM-DD>-<topic>/, shows a fuzzy list, and prints the selected
 // or newly-created project path to stdout. A thin shell wrapper cd's into it.
 //
-// Subcommands: `dw -` jumps to the last workspace, `dw list` lists workspaces,
-// `dw root` prints the root, `dw version` prints the version, `dw help` shows usage.
+// Subcommands: `dw -` jumps to the last workspace, `dw new` creates one
+// non-interactively, `dw list` lists workspaces, `dw root` prints the root,
+// `dw init` prints the shell wrapper, `dw version` prints the version, and
+// `dw help` shows usage.
 package main
 
 import (
@@ -158,8 +160,19 @@ func cmdNew(stdout, stderr io.Writer, args []string, now time.Time) int {
 		fmt.Fprintf(stderr, "dw new: missing topic\n%s\n", usage)
 		return 2
 	}
-	if strings.TrimSpace(category) == "" {
+	category = strings.TrimSpace(category)
+	if category == "" {
 		fmt.Fprintf(stderr, "dw new: --category is required\n%s\n", usage)
+		return 2
+	}
+	// Match the picker, which only offers create when the value yields a
+	// non-empty slug — so the two creation paths accept the same inputs.
+	if workspace.Slugify(topic) == "" {
+		fmt.Fprintf(stderr, "dw new: topic %q has no letters or digits to slugify\n%s\n", topic, usage)
+		return 2
+	}
+	if workspace.Slugify(category) == "" {
+		fmt.Fprintf(stderr, "dw new: category %q has no letters or digits to slugify\n%s\n", category, usage)
 		return 2
 	}
 	root := workspace.Root()
