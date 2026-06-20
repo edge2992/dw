@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -114,10 +116,171 @@ func TestCmdHelp(t *testing.T) {
 		t.Fatalf("exit = %d", code)
 	}
 	s := out.String()
-	for _, want := range []string{"Usage:", "dw list", "dw root", "dw version", "DW_ROOT"} {
+	for _, want := range []string{"Usage:", "dw new", "dw list", "dw root", "dw init", "dw version", "DW_ROOT"} {
 		if !strings.Contains(s, want) {
 			t.Errorf("help missing %q", want)
 		}
+	}
+}
+
+// newEnv points DW_ROOT at a fresh temp dir and the cache (HOME/XDG_CACHE_HOME)
+// at a separate one, so cmdNew can create under the root and persist the "last"
+// pin without the cache leaking into the root and muddying "nothing created"
+// assertions.
+func newEnv(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	cache := t.TempDir()
+	t.Setenv("DW_ROOT", root)
+	t.Setenv("HOME", cache)
+	t.Setenv("XDG_CACHE_HOME", cache)
+	return root
+}
+
+func TestCmdNew(t *testing.T) {
+	newEnv(t)
+	now := time.Date(2026, 6, 20, 0, 0, 0, 0, time.UTC)
+	var out, errb bytes.Buffer
+	if code := cmdNew(&out, &errb, []string{"--category", "research", "my topic"}, now); code != 0 {
+		t.Fatalf("exit = %d, stderr = %s", code, errb.String())
+	}
+	path := strings.TrimSpace(out.String())
+	if !strings.HasSuffix(path, "research/2026-06-20-my-topic") {
+		t.Fatalf("path = %q, want it to end with research/2026-06-20-my-topic", path)
+	}
+	if fi, err := os.Stat(path); err != nil || !fi.IsDir() {
+		t.Fatalf("workspace dir not created at %q: %v", path, err)
+	}
+	if _, err := os.Stat(filepath.Join(path, "README.md")); err != nil {
+		t.Errorf("README.md not created: %v", err)
+	}
+	// SaveLast ran, so `dw -` resolves to the same path.
+	var jout, jerr bytes.Buffer
+	if code := cmdJump(&jout, &jerr); code != 0 {
+		t.Fatalf("jump exit = %d, stderr = %s", code, jerr.String())
+	}
+	if strings.TrimSpace(jout.String()) != path {
+		t.Errorf("jump = %q, want %q", jout.String(), path)
+	}
+}
+
+func TestCmdNewTopicAfterFlag(t *testing.T) {
+	newEnv(t)
+	now := time.Date(2026, 6, 20, 0, 0, 0, 0, time.UTC)
+	var out, errb bytes.Buffer
+	// topic before the flag must still parse (order-independent).
+	if code := cmdNew(&out, &errb, []string{"my topic", "--category", "research"}, now); code != 0 {
+		t.Fatalf("exit = %d, stderr = %s", code, errb.String())
+	}
+	if !strings.HasSuffix(strings.TrimSpace(out.String()), "research/2026-06-20-my-topic") {
+		t.Errorf("path = %q", out.String())
+	}
+}
+
+func TestCmdNewMissingCategory(t *testing.T) {
+	newEnv(t)
+	var out, errb bytes.Buffer
+	if code := cmdNew(&out, &errb, []string{"my topic"}, time.Now()); code != 2 {
+		t.Errorf("exit = %d, want 2", code)
+	}
+	if out.Len() != 0 {
+		t.Errorf("stdout should be empty, got %q", out.String())
+	}
+	if !strings.Contains(errb.String(), "category") {
+		t.Errorf("stderr = %q, want it to mention category", errb.String())
+	}
+}
+
+func TestCmdNewMissingTopic(t *testing.T) {
+	newEnv(t)
+	var out, errb bytes.Buffer
+	if code := cmdNew(&out, &errb, []string{"--category", "research"}, time.Now()); code != 2 {
+		t.Errorf("exit = %d, want 2", code)
+	}
+	if !strings.Contains(errb.String(), "topic") {
+		t.Errorf("stderr = %q, want it to mention topic", errb.String())
+	}
+}
+
+func TestCmdNewSlugifiesCategory(t *testing.T) {
+	root := newEnv(t)
+	now := time.Date(2026, 6, 20, 0, 0, 0, 0, time.UTC)
+	var out, errb bytes.Buffer
+	if code := cmdNew(&out, &errb, []string{"hello", "--category", "My Cat"}, now); code != 0 {
+		t.Fatalf("exit = %d, stderr = %s", code, errb.String())
+	}
+	// The picker slugifies new category names before Create; cmdNew must match,
+	// so a "My Cat" category lands in my-cat/ rather than a divergent "My Cat/".
+	want := filepath.Join(root, "my-cat", "2026-06-20-hello")
+	if got := strings.TrimSpace(out.String()); got != want {
+		t.Errorf("path = %q, want %q", got, want)
+	}
+	if fi, err := os.Stat(want); err != nil || !fi.IsDir() {
+		t.Errorf("expected dir %q: %v", want, err)
+	}
+}
+
+func TestCmdNewUnslugifiableTopic(t *testing.T) {
+	root := newEnv(t)
+	var out, errb bytes.Buffer
+	// "!!!" slugifies to "", which the picker refuses to create — cmdNew must too.
+	if code := cmdNew(&out, &errb, []string{"!!!", "--category", "research"}, time.Now()); code != 2 {
+		t.Errorf("exit = %d, want 2", code)
+	}
+	if !strings.Contains(errb.String(), "topic") {
+		t.Errorf("stderr = %q, want it to mention topic", errb.String())
+	}
+	if entries, _ := os.ReadDir(root); len(entries) != 0 {
+		t.Errorf("nothing should be created, got %v", entries)
+	}
+}
+
+func TestCmdNewUnslugifiableCategory(t *testing.T) {
+	root := newEnv(t)
+	var out, errb bytes.Buffer
+	if code := cmdNew(&out, &errb, []string{"hello", "--category", "!!!"}, time.Now()); code != 2 {
+		t.Errorf("exit = %d, want 2", code)
+	}
+	if !strings.Contains(errb.String(), "category") {
+		t.Errorf("stderr = %q, want it to mention category", errb.String())
+	}
+	if entries, _ := os.ReadDir(root); len(entries) != 0 {
+		t.Errorf("nothing should be created, got %v", entries)
+	}
+}
+
+func TestCmdInit(t *testing.T) {
+	for _, shell := range []string{"zsh", "bash"} {
+		var out, errb bytes.Buffer
+		if code := cmdInit(&out, &errb, []string{shell}); code != 0 {
+			t.Fatalf("%s: exit = %d, stderr = %s", shell, code, errb.String())
+		}
+		s := out.String()
+		for _, want := range []string{"dw()", "cd ", "command dw", "new"} {
+			if !strings.Contains(s, want) {
+				t.Errorf("%s: init output missing %q\n%s", shell, want, s)
+			}
+		}
+	}
+}
+
+func TestCmdInitUnsupported(t *testing.T) {
+	var out, errb bytes.Buffer
+	if code := cmdInit(&out, &errb, []string{"fish"}); code != 2 {
+		t.Errorf("exit = %d, want 2", code)
+	}
+	if out.Len() != 0 {
+		t.Errorf("stdout should be empty, got %q", out.String())
+	}
+	if !strings.Contains(errb.String(), "unsupported") {
+		t.Errorf("stderr = %q", errb.String())
+	}
+}
+
+func TestCmdInitNoShell(t *testing.T) {
+	var out, errb bytes.Buffer
+	if code := cmdInit(&out, &errb, nil); code != 2 {
+		t.Errorf("exit = %d, want 2", code)
 	}
 }
 
