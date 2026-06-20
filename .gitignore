@@ -4,3 +4,7 @@
 
 # goreleaser output
 /dist/
+
+# tooling caches / local config
+/.claude/
+/.serena/
