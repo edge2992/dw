@@ -171,10 +171,15 @@ func cmdNew(stdout, stderr io.Writer, args []string, now time.Time) int {
 		fmt.Fprintf(stderr, "dw new: topic %q has no letters or digits to slugify\n%s\n", topic, usage)
 		return 2
 	}
-	if workspace.Slugify(category) == "" {
+	catSlug := workspace.Slugify(category)
+	if catSlug == "" {
 		fmt.Fprintf(stderr, "dw new: category %q has no letters or digits to slugify\n%s\n", category, usage)
 		return 2
 	}
+	// The picker slugifies a new category name before creating it; do the same
+	// so `dw new -c "My Cat"` and the picker both land in my-cat/, never two
+	// directories for the same logical category.
+	category = catSlug
 	root := workspace.Root()
 	tmpl := workspace.ResolveTemplate(category)
 	p, err := workspace.Create(root, category, topic, now, tmpl)

@@ -123,15 +123,17 @@ func TestCmdHelp(t *testing.T) {
 	}
 }
 
-// newEnv points DW_ROOT, HOME and the cache dir at a fresh temp dir so cmdNew
-// can both create under the root and persist the "last" pin without touching
-// the real filesystem.
+// newEnv points DW_ROOT at a fresh temp dir and the cache (HOME/XDG_CACHE_HOME)
+// at a separate one, so cmdNew can create under the root and persist the "last"
+// pin without the cache leaking into the root and muddying "nothing created"
+// assertions.
 func newEnv(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
+	cache := t.TempDir()
 	t.Setenv("DW_ROOT", root)
-	t.Setenv("HOME", root)
-	t.Setenv("XDG_CACHE_HOME", root)
+	t.Setenv("HOME", cache)
+	t.Setenv("XDG_CACHE_HOME", cache)
 	return root
 }
 
@@ -197,6 +199,24 @@ func TestCmdNewMissingTopic(t *testing.T) {
 	}
 	if !strings.Contains(errb.String(), "topic") {
 		t.Errorf("stderr = %q, want it to mention topic", errb.String())
+	}
+}
+
+func TestCmdNewSlugifiesCategory(t *testing.T) {
+	root := newEnv(t)
+	now := time.Date(2026, 6, 20, 0, 0, 0, 0, time.UTC)
+	var out, errb bytes.Buffer
+	if code := cmdNew(&out, &errb, []string{"hello", "--category", "My Cat"}, now); code != 0 {
+		t.Fatalf("exit = %d, stderr = %s", code, errb.String())
+	}
+	// The picker slugifies new category names before Create; cmdNew must match,
+	// so a "My Cat" category lands in my-cat/ rather than a divergent "My Cat/".
+	want := filepath.Join(root, "my-cat", "2026-06-20-hello")
+	if got := strings.TrimSpace(out.String()); got != want {
+		t.Errorf("path = %q, want %q", got, want)
+	}
+	if fi, err := os.Stat(want); err != nil || !fi.IsDir() {
+		t.Errorf("expected dir %q: %v", want, err)
 	}
 }
 

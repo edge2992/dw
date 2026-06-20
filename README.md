@@ -76,7 +76,7 @@ function dwc() {
   case "${1:-}" in
     ''|-|new)
       local dir
-      dir=$(command dw "$@") && [ -n "$dir" ] && cd "$dir" && claude ;;
+      dir="$(command dw "$@")" && [ -n "$dir" ] && cd "$dir" && claude ;;
     *)
       command dw "$@" ;;
   esac
