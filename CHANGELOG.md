@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0](https://github.com/edge2992/dw/compare/v0.4.0...v0.5.0) (2026-06-20)
+
+
+### Features
+
+* add dw new and dw init subcommands ([#17](https://github.com/edge2992/dw/issues/17)) ([d31d27a](https://github.com/edge2992/dw/commit/d31d27a197a478160b0df782dd24b77527303203))
+
 ## [0.4.0](https://github.com/edge2992/dw/compare/v0.3.0...v0.4.0) (2026-06-17)
 
 
