@@ -61,6 +61,24 @@ func main() { os.Exit(run(os.Args, os.Stdout, os.Stderr, time.Now())) }
 // run dispatches argv to a subcommand and returns the process exit code.
 // argv[0] is the program name; argv[1] is the subcommand (or "-", or absent).
 func run(argv []string, stdout, stderr io.Writer, now time.Time) int {
+	// Subcommands that never read the workspace config are dispatched first, so a
+	// malformed ~/.config/dw/config.yml can't break `dw help`, the `dw init` shell
+	// wrapper, or the `dw config` commands you'd reach for to repair it.
+	if len(argv) >= 2 {
+		switch argv[1] {
+		case "-":
+			return cmdJump(stdout, stderr)
+		case "config":
+			return cmdConfig(stdout, stderr, argv[2:])
+		case "init":
+			return cmdInit(stdout, stderr, argv[2:])
+		case "version", "--version", "-v":
+			return cmdVersion(stdout)
+		case "help", "--help", "-h":
+			return cmdHelp(stdout)
+		}
+	}
+
 	cfg, err := config.Load()
 	if err != nil {
 		fmt.Fprintln(stderr, "dw: config:", err)
@@ -70,22 +88,12 @@ func run(argv []string, stdout, stderr io.Writer, now time.Time) int {
 		return runTUI(cfg, stdout, stderr, now) // bare `dw`
 	}
 	switch argv[1] {
-	case "-":
-		return cmdJump(stdout, stderr)
 	case "new":
 		return cmdNew(cfg, stdout, stderr, argv[2:], now)
 	case "list":
 		return cmdList(cfg, stdout, stderr, argv[2:])
 	case "root":
 		return cmdRoot(cfg, stdout)
-	case "config":
-		return cmdConfig(stdout, stderr, argv[2:])
-	case "init":
-		return cmdInit(stdout, stderr, argv[2:])
-	case "version", "--version", "-v":
-		return cmdVersion(stdout)
-	case "help", "--help", "-h":
-		return cmdHelp(stdout)
 	default:
 		fmt.Fprintf(stderr, "dw: unknown command %q\nRun 'dw help' for usage.\n", argv[1])
 		return 2

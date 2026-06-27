@@ -7,6 +7,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -52,18 +53,21 @@ func Load() (Config, error) {
 }
 
 // Resolve fills empty fields with built-in defaults and expands ~ and $ENV in
-// the path fields. Categories defaults to workspace.DefaultCategories only when
-// the key is absent (nil); an explicit list replaces it wholesale.
+// the user-supplied path fields. Computed defaults are already absolute, so they
+// skip expansion (avoiding corruption when a home path contains a literal '$').
+// Categories falls back to the built-in set when the key is absent or empty.
 func (c Config) Resolve() Config {
 	if c.Root == "" {
 		c.Root = filepath.Join(homeDir(), "dw")
+	} else {
+		c.Root = expandPath(c.Root)
 	}
-	c.Root = expandPath(c.Root)
 	if c.TemplatesDir == "" {
 		c.TemplatesDir = filepath.Join(configHome(), "dw", "templates")
+	} else {
+		c.TemplatesDir = expandPath(c.TemplatesDir)
 	}
-	c.TemplatesDir = expandPath(c.TemplatesDir)
-	if c.Categories == nil {
+	if len(c.Categories) == 0 {
 		c.Categories = append([]string(nil), workspace.DefaultCategories...)
 	}
 	return c
@@ -73,6 +77,10 @@ func (c Config) Resolve() Config {
 // set to its built-in default, so an untouched file behaves exactly like having
 // no file at all — editing it is how you opt into overrides.
 func DefaultYAML() []byte {
+	var cats strings.Builder
+	for _, c := range workspace.DefaultCategories {
+		fmt.Fprintf(&cats, "  - %s\n", c)
+	}
 	return []byte(`# dw configuration — every key is optional; omitted keys use built-in defaults.
 
 # Workspace root scanned for <category>/<YYYY-MM-DD>-<topic>/ projects.
@@ -84,13 +92,9 @@ root: ~/dw
 templates_dir: ~/.config/dw/templates
 
 # Categories offered in the picker, in order. Replaces the built-in set entirely.
-# Default: [research, incident, discussion, scratch]
+# Default: the built-in categories listed below.
 categories:
-  - research
-  - incident
-  - discussion
-  - scratch
-`)
+` + cats.String())
 }
 
 // configHome returns ~/.config, where dw keeps its config and templates.

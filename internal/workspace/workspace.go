@@ -137,7 +137,9 @@ func Categories(base []string, projects []Project) []string {
 	return append(out, extra...)
 }
 
-// DefaultCategories are always offered even when empty.
+// DefaultCategories is the built-in category set used when the config omits (or
+// empties) the categories list. config.Resolve seeds Config.Categories from it,
+// and that value is what Categories receives as its base.
 var DefaultCategories = []string{"research", "incident", "discussion", "scratch"}
 
 // Create makes <root>/<category>/<date>-<slug>/ with a README rendered from tmpl.
