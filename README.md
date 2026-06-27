@@ -27,7 +27,7 @@ $ dw
 - **Frontmatter-aware** — shows `status` / `tags` / `created` from each README under the selection.
 - **Scriptable primitives** — the TUI is sugar over plain commands: `dw new` creates, `dw list` (`--json`) streams, so you can compose your own flow (`dw list --json | fzf`) instead of the picker.
 - **Unicode-safe slugs** — Japanese and other scripts survive slugification (`機械学習 調査` → `機械学習-調査`).
-- **Zero-config** — defaults to `~/dw`; one env var to relocate.
+- **Zero-config, YAML when you want it** — works out of the box at `~/dw`; relocate the root, point templates elsewhere, or redefine categories in `~/.config/dw/config.yml`.
 
 ## Install
 
@@ -117,6 +117,8 @@ In the picker:
 | `dw list` | List workspaces as `category/name`, one per line. |
 | `dw list --json` | List workspaces as a JSON array (includes absolute `path`). |
 | `dw root` | Print the resolved workspace root. |
+| `dw config path` | Print the resolved config file path. |
+| `dw config init` | Write a starter `config.yml` (won't overwrite an existing one). |
 | `dw init <zsh\|bash>` | Print the shell wrapper to `eval` (see Shell integration). |
 | `dw version` | Print the version. |
 | `dw help` / `-h` | Show usage. |
@@ -127,47 +129,80 @@ what makes the `dw()` wrapper and pipelines like `dw list | fzf` work.
 ## Layout
 
 ```text
-$DW_ROOT/<category>/<YYYY-MM-DD>-<topic-slug>/
+<root>/<category>/<YYYY-MM-DD>-<topic-slug>/
   README.md   # frontmatter-indexed entry point
 ```
 
-`$DW_ROOT` defaults to `~/dw`. Categories are arbitrary folders; the defaults
-offered when empty are `research`, `incident`, `discussion`, `scratch`.
+`<root>` defaults to `~/dw` (configurable). Categories are arbitrary folders; the
+defaults offered when empty are `research`, `incident`, `discussion`, `scratch`.
 
 ## Configuration
 
-- **`DW_ROOT`** — workspace root. Defaults to `~/dw`.
-- **Templates** — picked per category, first match wins:
-  1. `~/.config/discussion/templates/<category>.md` — per-category
-  2. `~/.config/discussion/templates/default.md` — shared default
-  3. `~/.config/discussion/template.md` — legacy single template (back-compat)
-  4. built-in default (works with nothing configured)
+`dw` reads everything from `~/.config/dw/config.yml`. It's entirely optional —
+with no file, dw uses the built-in defaults below. Scaffold one with
+`dw config init`, then edit it:
+
+```yaml
+# ~/.config/dw/config.yml — every key is optional; omitted keys use the defaults.
+root: ~/dw                          # workspace root
+templates_dir: ~/.config/dw/templates  # per-category template directory
+categories:                         # picker categories, in order (replaces the defaults)
+  - research
+  - incident
+  - discussion
+  - scratch
+```
+
+- **`root`** — workspace root. `~` and `$ENV` (e.g. `$HOME`, `${XDG_DATA_HOME}`)
+  are expanded. Default: `~/dw`.
+- **`templates_dir`** — where per-category templates live (also `~`/`$ENV`-expanded).
+  Default: `~/.config/dw/templates`. The template for a new workspace is picked
+  per category, first match wins:
+  1. `<templates_dir>/<category>.md` — per-category
+  2. `<templates_dir>/default.md` — shared default
+  3. built-in default (works with nothing configured)
 
   All substitute `{{title}}`, `{{category}}`, `{{date}}`. Drop a
-  `~/.config/discussion/templates/research.md` to give just the `research`
-  category its own scaffold.
+  `<templates_dir>/research.md` to give just the `research` category its own scaffold.
+- **`categories`** — the categories offered in the picker, in order. When set it
+  **replaces** the built-in list entirely; omit it to keep the defaults.
+  Categories you create on the fly still appear automatically.
+- **`DW_CONFIG`** (env) — overrides only the config file *location* (not its
+  values). Handy for hermetic tests or keeping multiple profiles.
 - **Last-workspace cache** — recorded under `os.UserCacheDir()` (`~/Library/Caches/dw/last`
   on macOS, `~/.cache/dw/last` on Linux). Drives both the top-of-list pin and `dw -`.
 
 ## Migration
 
-> **Breaking change.** The default root moved from `~/Discussion` to `~/dw`, and the
-> environment variable was renamed `DISCUSSION_ROOT` → `DW_ROOT`. The old variable is
-> no longer read.
+> **Breaking change.** Configuration moved from environment variables to
+> `~/.config/dw/config.yml`. The **`DW_ROOT` env var is no longer read** — set
+> `root:` in the config instead. Templates also moved from
+> `~/.config/discussion/templates/` to `~/.config/dw/templates/` (the old
+> `discussion` paths are no longer searched).
 
-If you have an existing `~/Discussion` tree, either point `dw` at it or move it:
+If you relied on `DW_ROOT`, persist it once:
 
 ```sh
-export DW_ROOT=~/Discussion   # keep your data where it is
-# — or —
-mv ~/Discussion ~/dw          # adopt the new default
+dw config init                       # writes ~/.config/dw/config.yml
+# then edit it: set `root:` to your old $DW_ROOT value
 ```
+
+Move any custom templates to the new location:
+
+```sh
+mkdir -p ~/.config/dw/templates
+mv ~/.config/discussion/templates/* ~/.config/dw/templates/ 2>/dev/null
+```
+
+(Historical: the default root previously moved from `~/Discussion` to `~/dw`, and
+`DISCUSSION_ROOT` was renamed `DW_ROOT` before being retired here.)
 
 ## Architecture
 
+- `internal/config` — loads/resolves `~/.config/dw/config.yml` (root / templates_dir / categories), with `~` and `$ENV` expansion and built-in defaults.
 - `internal/workspace` — scanning / slugification / creation / templates / last-path persistence (pure logic, tested).
 - `internal/tui` — the single bubbletea fuzzy list (jump + create + category select + pin).
-- `main.go` — subcommand dispatch (`run()`); wires `dw -`, `new`, `list`, `root`, `init`, `version`, `help`, and the picker. `dw new` and the picker share the same `workspace.Create` core.
+- `main.go` — subcommand dispatch (`run()`); loads config once and wires `dw -`, `new`, `list`, `root`, `config`, `init`, `version`, `help`, and the picker. `dw new` and the picker share the same `workspace.Create` core.
 
 ## Development
 

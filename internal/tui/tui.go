@@ -49,10 +49,11 @@ type row struct {
 
 // Model is the bubbletea model for the dw picker.
 type Model struct {
-	root       string
-	now        time.Time
-	projects   []workspace.Project
-	categories []string // available categories, computed once at startup
+	root         string
+	templatesDir string // dir searched for per-category templates on create
+	now          time.Time
+	projects     []workspace.Project
+	categories   []string // available categories, computed once at startup
 
 	mode   mode
 	query  string
@@ -71,17 +72,20 @@ type Model struct {
 
 // New builds the initial model. lastPath, when it matches a project, is pinned
 // to the top of the browse list so the most common move — resuming the previous
-// workspace — is one Enter away; pass "" to disable pinning.
-func New(root string, now time.Time, projects []workspace.Project, lastPath string) Model {
+// workspace — is one Enter away; pass "" to disable pinning. categories is the
+// already-merged list to offer (config order + on-disk extras) and templatesDir
+// is where per-category templates are resolved from on create.
+func New(root string, now time.Time, projects []workspace.Project, lastPath string, categories []string, templatesDir string) Model {
 	pinned, ok := pinLast(projects, lastPath)
 	return Model{
-		root:       root,
-		now:        now,
-		projects:   pinned,
-		categories: workspace.Categories(projects),
-		mode:       modeBrowse,
-		lastPath:   lastPath,
-		hasPin:     ok,
+		root:         root,
+		templatesDir: templatesDir,
+		now:          now,
+		projects:     pinned,
+		categories:   categories,
+		mode:         modeBrowse,
+		lastPath:     lastPath,
+		hasPin:       ok,
 	}
 }
 
@@ -244,7 +248,7 @@ func (m Model) onEnter() (tea.Model, tea.Cmd) {
 
 	// modeCategory: r.label is the category (existing or new). Resolve the
 	// template now that the category is known so per-category templates apply.
-	tmpl := workspace.ResolveTemplate(r.label)
+	tmpl := workspace.ResolveTemplate(m.templatesDir, r.label)
 	p, err := workspace.Create(m.root, r.label, m.pendingTopic, m.now, tmpl)
 	if err != nil {
 		m.Err = err

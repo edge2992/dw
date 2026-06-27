@@ -9,14 +9,25 @@ import (
 	"testing"
 	"time"
 
+	"github.com/edge2992/dw/internal/config"
 	"github.com/edge2992/dw/internal/workspace"
 )
 
-// seed creates two projects under a temp root and points DW_ROOT at it.
-func seed(t *testing.T) string {
+// testCfg builds a Config rooted at root, with a templates dir that does not
+// exist (so ResolveTemplate falls back to the built-in DefaultTemplate) and the
+// default categories. It mirrors what config.Load would resolve, minus the file.
+func testCfg(root string) config.Config {
+	return config.Config{
+		Root:         root,
+		TemplatesDir: filepath.Join(root, "no-templates"),
+		Categories:   workspace.DefaultCategories,
+	}
+}
+
+// seed creates two projects under a temp root and returns a Config pointing at it.
+func seed(t *testing.T) config.Config {
 	t.Helper()
 	root := t.TempDir()
-	t.Setenv("DW_ROOT", root)
 	now := time.Date(2026, 6, 14, 0, 0, 0, 0, time.UTC)
 	older := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
 	if _, err := workspace.Create(root, "research", "k8s pod oom", now, workspace.DefaultTemplate); err != nil {
@@ -25,13 +36,13 @@ func seed(t *testing.T) string {
 	if _, err := workspace.Create(root, "incident", "db outage", older, workspace.DefaultTemplate); err != nil {
 		t.Fatal(err)
 	}
-	return root
+	return testCfg(root)
 }
 
 func TestCmdList(t *testing.T) {
-	seed(t)
+	cfg := seed(t)
 	var out, errb bytes.Buffer
-	if code := cmdList(&out, &errb, nil); code != 0 {
+	if code := cmdList(cfg, &out, &errb, nil); code != 0 {
 		t.Fatalf("exit = %d, stderr = %s", code, errb.String())
 	}
 	got := strings.Split(strings.TrimSpace(out.String()), "\n")
@@ -47,9 +58,9 @@ func TestCmdList(t *testing.T) {
 }
 
 func TestCmdListJSON(t *testing.T) {
-	seed(t)
+	cfg := seed(t)
 	var out, errb bytes.Buffer
-	if code := cmdList(&out, &errb, []string{"--json"}); code != 0 {
+	if code := cmdList(cfg, &out, &errb, []string{"--json"}); code != 0 {
 		t.Fatalf("exit = %d, stderr = %s", code, errb.String())
 	}
 	var projects []workspace.Project
@@ -65,9 +76,9 @@ func TestCmdListJSON(t *testing.T) {
 }
 
 func TestCmdListEmptyRoot(t *testing.T) {
-	t.Setenv("DW_ROOT", t.TempDir()) // empty, existing dir
+	cfg := testCfg(t.TempDir()) // empty, existing dir
 	var out, errb bytes.Buffer
-	if code := cmdList(&out, &errb, []string{"--json"}); code != 0 {
+	if code := cmdList(cfg, &out, &errb, []string{"--json"}); code != 0 {
 		t.Fatalf("exit = %d", code)
 	}
 	if strings.TrimSpace(out.String()) != "[]" {
@@ -76,9 +87,9 @@ func TestCmdListEmptyRoot(t *testing.T) {
 }
 
 func TestCmdListRejectsExtraArg(t *testing.T) {
-	t.Setenv("DW_ROOT", t.TempDir())
+	cfg := testCfg(t.TempDir())
 	var out, errb bytes.Buffer
-	if code := cmdList(&out, &errb, []string{"bogus"}); code != 2 {
+	if code := cmdList(cfg, &out, &errb, []string{"bogus"}); code != 2 {
 		t.Errorf("exit = %d, want 2", code)
 	}
 	if out.Len() != 0 {
@@ -90,9 +101,9 @@ func TestCmdListRejectsExtraArg(t *testing.T) {
 }
 
 func TestCmdRoot(t *testing.T) {
-	t.Setenv("DW_ROOT", "/tmp/my-root")
+	cfg := config.Config{Root: "/tmp/my-root"}
 	var out bytes.Buffer
-	if code := cmdRoot(&out); code != 0 {
+	if code := cmdRoot(cfg, &out); code != 0 {
 		t.Fatalf("exit = %d", code)
 	}
 	if strings.TrimSpace(out.String()) != "/tmp/my-root" {
@@ -116,32 +127,34 @@ func TestCmdHelp(t *testing.T) {
 		t.Fatalf("exit = %d", code)
 	}
 	s := out.String()
-	for _, want := range []string{"Usage:", "dw new", "dw list", "dw root", "dw init", "dw version", "DW_ROOT"} {
+	for _, want := range []string{"Usage:", "dw new", "dw list", "dw root", "dw config", "dw init", "dw version", "DW_CONFIG", "config.yml"} {
 		if !strings.Contains(s, want) {
 			t.Errorf("help missing %q", want)
 		}
 	}
+	if strings.Contains(s, "DW_ROOT") {
+		t.Errorf("help should no longer mention DW_ROOT:\n%s", s)
+	}
 }
 
-// newEnv points DW_ROOT at a fresh temp dir and the cache (HOME/XDG_CACHE_HOME)
-// at a separate one, so cmdNew can create under the root and persist the "last"
-// pin without the cache leaking into the root and muddying "nothing created"
-// assertions.
-func newEnv(t *testing.T) string {
+// newEnv returns a Config rooted at a fresh temp dir and points the cache
+// (HOME/XDG_CACHE_HOME) at a separate one, so cmdNew can create under the root
+// and persist the "last" pin without the cache leaking into the root and
+// muddying "nothing created" assertions.
+func newEnv(t *testing.T) config.Config {
 	t.Helper()
 	root := t.TempDir()
 	cache := t.TempDir()
-	t.Setenv("DW_ROOT", root)
 	t.Setenv("HOME", cache)
 	t.Setenv("XDG_CACHE_HOME", cache)
-	return root
+	return testCfg(root)
 }
 
 func TestCmdNew(t *testing.T) {
-	newEnv(t)
+	cfg := newEnv(t)
 	now := time.Date(2026, 6, 20, 0, 0, 0, 0, time.UTC)
 	var out, errb bytes.Buffer
-	if code := cmdNew(&out, &errb, []string{"--category", "research", "my topic"}, now); code != 0 {
+	if code := cmdNew(cfg, &out, &errb, []string{"--category", "research", "my topic"}, now); code != 0 {
 		t.Fatalf("exit = %d, stderr = %s", code, errb.String())
 	}
 	path := strings.TrimSpace(out.String())
@@ -165,11 +178,11 @@ func TestCmdNew(t *testing.T) {
 }
 
 func TestCmdNewTopicAfterFlag(t *testing.T) {
-	newEnv(t)
+	cfg := newEnv(t)
 	now := time.Date(2026, 6, 20, 0, 0, 0, 0, time.UTC)
 	var out, errb bytes.Buffer
 	// topic before the flag must still parse (order-independent).
-	if code := cmdNew(&out, &errb, []string{"my topic", "--category", "research"}, now); code != 0 {
+	if code := cmdNew(cfg, &out, &errb, []string{"my topic", "--category", "research"}, now); code != 0 {
 		t.Fatalf("exit = %d, stderr = %s", code, errb.String())
 	}
 	if !strings.HasSuffix(strings.TrimSpace(out.String()), "research/2026-06-20-my-topic") {
@@ -178,9 +191,9 @@ func TestCmdNewTopicAfterFlag(t *testing.T) {
 }
 
 func TestCmdNewMissingCategory(t *testing.T) {
-	newEnv(t)
+	cfg := newEnv(t)
 	var out, errb bytes.Buffer
-	if code := cmdNew(&out, &errb, []string{"my topic"}, time.Now()); code != 2 {
+	if code := cmdNew(cfg, &out, &errb, []string{"my topic"}, time.Now()); code != 2 {
 		t.Errorf("exit = %d, want 2", code)
 	}
 	if out.Len() != 0 {
@@ -192,9 +205,9 @@ func TestCmdNewMissingCategory(t *testing.T) {
 }
 
 func TestCmdNewMissingTopic(t *testing.T) {
-	newEnv(t)
+	cfg := newEnv(t)
 	var out, errb bytes.Buffer
-	if code := cmdNew(&out, &errb, []string{"--category", "research"}, time.Now()); code != 2 {
+	if code := cmdNew(cfg, &out, &errb, []string{"--category", "research"}, time.Now()); code != 2 {
 		t.Errorf("exit = %d, want 2", code)
 	}
 	if !strings.Contains(errb.String(), "topic") {
@@ -203,15 +216,15 @@ func TestCmdNewMissingTopic(t *testing.T) {
 }
 
 func TestCmdNewSlugifiesCategory(t *testing.T) {
-	root := newEnv(t)
+	cfg := newEnv(t)
 	now := time.Date(2026, 6, 20, 0, 0, 0, 0, time.UTC)
 	var out, errb bytes.Buffer
-	if code := cmdNew(&out, &errb, []string{"hello", "--category", "My Cat"}, now); code != 0 {
+	if code := cmdNew(cfg, &out, &errb, []string{"hello", "--category", "My Cat"}, now); code != 0 {
 		t.Fatalf("exit = %d, stderr = %s", code, errb.String())
 	}
 	// The picker slugifies new category names before Create; cmdNew must match,
 	// so a "My Cat" category lands in my-cat/ rather than a divergent "My Cat/".
-	want := filepath.Join(root, "my-cat", "2026-06-20-hello")
+	want := filepath.Join(cfg.Root, "my-cat", "2026-06-20-hello")
 	if got := strings.TrimSpace(out.String()); got != want {
 		t.Errorf("path = %q, want %q", got, want)
 	}
@@ -221,31 +234,89 @@ func TestCmdNewSlugifiesCategory(t *testing.T) {
 }
 
 func TestCmdNewUnslugifiableTopic(t *testing.T) {
-	root := newEnv(t)
+	cfg := newEnv(t)
 	var out, errb bytes.Buffer
 	// "!!!" slugifies to "", which the picker refuses to create — cmdNew must too.
-	if code := cmdNew(&out, &errb, []string{"!!!", "--category", "research"}, time.Now()); code != 2 {
+	if code := cmdNew(cfg, &out, &errb, []string{"!!!", "--category", "research"}, time.Now()); code != 2 {
 		t.Errorf("exit = %d, want 2", code)
 	}
 	if !strings.Contains(errb.String(), "topic") {
 		t.Errorf("stderr = %q, want it to mention topic", errb.String())
 	}
-	if entries, _ := os.ReadDir(root); len(entries) != 0 {
+	if entries, _ := os.ReadDir(cfg.Root); len(entries) != 0 {
 		t.Errorf("nothing should be created, got %v", entries)
 	}
 }
 
 func TestCmdNewUnslugifiableCategory(t *testing.T) {
-	root := newEnv(t)
+	cfg := newEnv(t)
 	var out, errb bytes.Buffer
-	if code := cmdNew(&out, &errb, []string{"hello", "--category", "!!!"}, time.Now()); code != 2 {
+	if code := cmdNew(cfg, &out, &errb, []string{"hello", "--category", "!!!"}, time.Now()); code != 2 {
 		t.Errorf("exit = %d, want 2", code)
 	}
 	if !strings.Contains(errb.String(), "category") {
 		t.Errorf("stderr = %q, want it to mention category", errb.String())
 	}
-	if entries, _ := os.ReadDir(root); len(entries) != 0 {
+	if entries, _ := os.ReadDir(cfg.Root); len(entries) != 0 {
 		t.Errorf("nothing should be created, got %v", entries)
+	}
+}
+
+func TestCmdConfigPath(t *testing.T) {
+	want := filepath.Join(t.TempDir(), "custom.yml")
+	t.Setenv("DW_CONFIG", want)
+	var out, errb bytes.Buffer
+	if code := cmdConfig(&out, &errb, []string{"path"}); code != 0 {
+		t.Fatalf("exit = %d, stderr = %s", code, errb.String())
+	}
+	if got := strings.TrimSpace(out.String()); got != want {
+		t.Errorf("path = %q, want %q", got, want)
+	}
+}
+
+func TestCmdConfigInitWritesAndIsNonDestructive(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "nested", "config.yml")
+	t.Setenv("DW_CONFIG", p)
+
+	// first init writes the starter config (creating parent dirs)
+	var out, errb bytes.Buffer
+	if code := cmdConfig(&out, &errb, []string{"init"}); code != 0 {
+		t.Fatalf("init exit = %d, stderr = %s", code, errb.String())
+	}
+	if strings.TrimSpace(out.String()) != p {
+		t.Errorf("init stdout = %q, want %q", out.String(), p)
+	}
+	first, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatalf("config not written: %v", err)
+	}
+
+	// second init must not clobber the (hand-edited) file
+	if err := os.WriteFile(p, []byte("root: /edited\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	errb.Reset()
+	if code := cmdConfig(&out, &errb, []string{"init"}); code != 0 {
+		t.Fatalf("second init exit = %d", code)
+	}
+	again, _ := os.ReadFile(p)
+	if string(again) != "root: /edited\n" {
+		t.Errorf("init clobbered an existing config: %q", string(again))
+	}
+	if !strings.Contains(errb.String(), "already exists") {
+		t.Errorf("expected an 'already exists' notice, got %q", errb.String())
+	}
+	_ = first
+}
+
+func TestCmdConfigUnknownSub(t *testing.T) {
+	var out, errb bytes.Buffer
+	if code := cmdConfig(&out, &errb, []string{"frobnicate"}); code != 2 {
+		t.Errorf("exit = %d, want 2", code)
+	}
+	if !strings.Contains(errb.String(), "unknown subcommand") {
+		t.Errorf("stderr = %q", errb.String())
 	}
 }
 
@@ -285,6 +356,7 @@ func TestCmdInitNoShell(t *testing.T) {
 }
 
 func TestRunUnknownCommand(t *testing.T) {
+	t.Setenv("DW_CONFIG", filepath.Join(t.TempDir(), "none.yml")) // hermetic: no host config
 	var out, errb bytes.Buffer
 	code := run([]string{"dw", "bogus"}, &out, &errb, time.Now())
 	if code != 2 {
@@ -299,9 +371,31 @@ func TestRunJump(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
 	t.Setenv("XDG_CACHE_HOME", tmp)
+	t.Setenv("DW_CONFIG", filepath.Join(tmp, "none.yml"))
 	var out, errb bytes.Buffer
 	// no previous workspace yet -> exit 1
 	if code := run([]string{"dw", "-"}, &out, &errb, time.Now()); code != 1 {
 		t.Errorf("jump with no last: exit = %d, want 1", code)
+	}
+}
+
+// TestRunRootFromConfig is the end-to-end check that `dw root` reflects the
+// config file located via DW_CONFIG, with ~ / $ENV expanded.
+func TestRunRootFromConfig(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yml")
+	if err := os.WriteFile(cfgPath, []byte("root: $DWTEST_BASE/ws\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("DW_CONFIG", cfgPath)
+	t.Setenv("DWTEST_BASE", dir)
+
+	var out, errb bytes.Buffer
+	if code := run([]string{"dw", "root"}, &out, &errb, time.Now()); code != 0 {
+		t.Fatalf("exit = %d, stderr = %s", code, errb.String())
+	}
+	want := filepath.Join(dir, "ws")
+	if got := strings.TrimSpace(out.String()); got != want {
+		t.Errorf("root = %q, want %q", got, want)
 	}
 }

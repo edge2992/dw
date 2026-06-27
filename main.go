@@ -1,13 +1,14 @@
 // Command dw is an interactive picker for Claude discussion/research workspaces.
 //
-// It scans $DW_ROOT (default ~/dw) for projects laid out as
-// <category>/<YYYY-MM-DD>-<topic>/, shows a fuzzy list, and prints the selected
-// or newly-created project path to stdout. A thin shell wrapper cd's into it.
+// It scans the workspace root (from ~/.config/dw/config.yml, default ~/dw) for
+// projects laid out as <category>/<YYYY-MM-DD>-<topic>/, shows a fuzzy list, and
+// prints the selected or newly-created project path to stdout. A thin shell
+// wrapper cd's into it.
 //
 // Subcommands: `dw -` jumps to the last workspace, `dw new` creates one
 // non-interactively, `dw list` lists workspaces, `dw root` prints the root,
-// `dw init` prints the shell wrapper, `dw version` prints the version, and
-// `dw help` shows usage.
+// `dw config` manages the config file, `dw init` prints the shell wrapper,
+// `dw version` prints the version, and `dw help` shows usage.
 package main
 
 import (
@@ -16,10 +17,12 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"runtime/debug"
 	"strings"
 	"time"
 
+	"github.com/edge2992/dw/internal/config"
 	"github.com/edge2992/dw/internal/tui"
 	"github.com/edge2992/dw/internal/workspace"
 
@@ -39,12 +42,15 @@ Usage:
   dw new <topic> -c <cat>  Create a workspace non-interactively (prints its path)
   dw list [--json]         List workspaces (category/name, or JSON)
   dw root                  Print the workspace root
+  dw config <path|init>    Print the config path, or write a starter config
   dw init <zsh|bash>       Print the shell wrapper that cd's into chosen paths
   dw version               Print the version
   dw help                  Show this help
 
-Environment:
-  DW_ROOT   Workspace root (default ~/dw)
+Configuration:
+  Settings live in ~/.config/dw/config.yml (run 'dw config init' to scaffold it).
+  Keys (all optional, with built-in defaults): root, templates_dir, categories.
+  DW_CONFIG   Override the config file location (path only)
 
 dw prints the chosen path to stdout; cd is done by a shell wrapper.
 Enable it once with:  eval "$(dw init zsh)"   (or bash)
@@ -55,18 +61,25 @@ func main() { os.Exit(run(os.Args, os.Stdout, os.Stderr, time.Now())) }
 // run dispatches argv to a subcommand and returns the process exit code.
 // argv[0] is the program name; argv[1] is the subcommand (or "-", or absent).
 func run(argv []string, stdout, stderr io.Writer, now time.Time) int {
+	cfg, err := config.Load()
+	if err != nil {
+		fmt.Fprintln(stderr, "dw: config:", err)
+		return 1
+	}
 	if len(argv) < 2 {
-		return runTUI(stdout, stderr, now) // bare `dw`
+		return runTUI(cfg, stdout, stderr, now) // bare `dw`
 	}
 	switch argv[1] {
 	case "-":
 		return cmdJump(stdout, stderr)
 	case "new":
-		return cmdNew(stdout, stderr, argv[2:], now)
+		return cmdNew(cfg, stdout, stderr, argv[2:], now)
 	case "list":
-		return cmdList(stdout, stderr, argv[2:])
+		return cmdList(cfg, stdout, stderr, argv[2:])
 	case "root":
-		return cmdRoot(stdout)
+		return cmdRoot(cfg, stdout)
+	case "config":
+		return cmdConfig(stdout, stderr, argv[2:])
 	case "init":
 		return cmdInit(stdout, stderr, argv[2:])
 	case "version", "--version", "-v":
@@ -82,15 +95,15 @@ func run(argv []string, stdout, stderr io.Writer, now time.Time) int {
 // runTUI scans the root, runs the interactive picker, prints the chosen path,
 // and remembers it for next time. The UI renders to stderr so stdout carries
 // only the chosen path.
-func runTUI(stdout, stderr io.Writer, now time.Time) int {
-	root := workspace.Root()
-	projects, err := workspace.Scan(root)
+func runTUI(cfg config.Config, stdout, stderr io.Writer, now time.Time) int {
+	projects, err := workspace.Scan(cfg.Root)
 	if err != nil {
 		fmt.Fprintln(stderr, "dw: scan:", err)
 		return 1
 	}
 
-	model := tui.New(root, now, projects, workspace.LastPath())
+	categories := workspace.Categories(cfg.Categories, projects)
+	model := tui.New(cfg.Root, now, projects, workspace.LastPath(), categories, cfg.TemplatesDir)
 	// Render the UI to stderr so stdout carries only the chosen path.
 	p := tea.NewProgram(model, tea.WithOutput(stderr))
 	final, err := p.Run()
@@ -133,7 +146,7 @@ func cmdJump(stdout, stderr io.Writer) int {
 // scriptable counterpart of the picker's create-on-demand flow, sharing the
 // same workspace.Create core. We hand-parse args (instead of flag.FlagSet) so
 // the topic and -c/--category can appear in any order.
-func cmdNew(stdout, stderr io.Writer, args []string, now time.Time) int {
+func cmdNew(cfg config.Config, stdout, stderr io.Writer, args []string, now time.Time) int {
 	const usage = "Usage: dw new <topic> --category <cat>"
 	var category string
 	var topicParts []string
@@ -180,9 +193,8 @@ func cmdNew(stdout, stderr io.Writer, args []string, now time.Time) int {
 	// so `dw new -c "My Cat"` and the picker both land in my-cat/, never two
 	// directories for the same logical category.
 	category = catSlug
-	root := workspace.Root()
-	tmpl := workspace.ResolveTemplate(category)
-	p, err := workspace.Create(root, category, topic, now, tmpl)
+	tmpl := workspace.ResolveTemplate(cfg.TemplatesDir, category)
+	p, err := workspace.Create(cfg.Root, category, topic, now, tmpl)
 	if err != nil {
 		fmt.Fprintln(stderr, "dw:", err)
 		return 1
@@ -226,7 +238,7 @@ func cmdInit(stdout, stderr io.Writer, args []string) int {
 }
 
 // cmdList prints every workspace as "category/name" lines, or as JSON with --json.
-func cmdList(stdout, stderr io.Writer, args []string) int {
+func cmdList(cfg config.Config, stdout, stderr io.Writer, args []string) int {
 	fs := flag.NewFlagSet("list", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	asJSON := fs.Bool("json", false, "output as JSON")
@@ -237,7 +249,7 @@ func cmdList(stdout, stderr io.Writer, args []string) int {
 		fmt.Fprintf(stderr, "dw list: unexpected argument %q\n", fs.Arg(0))
 		return 2
 	}
-	projects, err := workspace.Scan(workspace.Root())
+	projects, err := workspace.Scan(cfg.Root)
 	if err != nil {
 		fmt.Fprintln(stderr, "dw: scan:", err)
 		return 1
@@ -261,9 +273,49 @@ func cmdList(stdout, stderr io.Writer, args []string) int {
 }
 
 // cmdRoot prints the resolved workspace root (`dw root`).
-func cmdRoot(stdout io.Writer) int {
-	fmt.Fprintln(stdout, workspace.Root())
+func cmdRoot(cfg config.Config, stdout io.Writer) int {
+	fmt.Fprintln(stdout, cfg.Root)
 	return 0
+}
+
+// cmdConfig manages the config file (`dw config path|init`). `path` prints the
+// resolved config location; `init` writes a starter config there, refusing to
+// clobber an existing file so a hand-edited config is never lost.
+func cmdConfig(stdout, stderr io.Writer, args []string) int {
+	const usage = "Usage: dw config <path|init>"
+	if len(args) != 1 {
+		fmt.Fprintln(stderr, usage)
+		return 2
+	}
+	switch args[0] {
+	case "path":
+		fmt.Fprintln(stdout, config.Path())
+		return 0
+	case "init":
+		p := config.Path()
+		switch _, err := os.Stat(p); {
+		case err == nil:
+			fmt.Fprintf(stderr, "dw config: %s already exists, leaving it untouched\n", p)
+			fmt.Fprintln(stdout, p)
+			return 0
+		case !os.IsNotExist(err):
+			fmt.Fprintln(stderr, "dw config:", err)
+			return 1
+		}
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			fmt.Fprintln(stderr, "dw config:", err)
+			return 1
+		}
+		if err := os.WriteFile(p, config.DefaultYAML(), 0o644); err != nil {
+			fmt.Fprintln(stderr, "dw config:", err)
+			return 1
+		}
+		fmt.Fprintln(stdout, p)
+		return 0
+	default:
+		fmt.Fprintf(stderr, "dw config: unknown subcommand %q\n%s\n", args[0], usage)
+		return 2
+	}
 }
 
 // cmdVersion prints the build version (`dw version`). Released binaries carry

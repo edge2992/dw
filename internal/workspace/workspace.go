@@ -27,15 +27,6 @@ type Project struct {
 
 var datePrefix = regexp.MustCompile(`^(\d{4}-\d{2}-\d{2})-(.*)$`)
 
-// Root returns the workspace root, honoring $DW_ROOT and defaulting to ~/dw.
-func Root() string {
-	if r := os.Getenv("DW_ROOT"); r != "" {
-		return r
-	}
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, "dw")
-}
-
 var slugDashes = regexp.MustCompile(`-+`)
 
 // Slugify normalizes a free-form topic into a filesystem-friendly slug.
@@ -121,12 +112,17 @@ func sortProjects(ps []Project) {
 	})
 }
 
-// Categories returns the available categories: the defaults first (in their
-// defined priority order), then any extra categories found on disk, sorted.
-func Categories(projects []Project) []string {
+// Categories returns the available categories: the configured base list first
+// (in its given order, de-duplicated), then any extra categories found on disk,
+// sorted. The base normally comes from config (config.Config.Categories), which
+// defaults to DefaultCategories when the user has not set it.
+func Categories(base []string, projects []Project) []string {
 	seen := map[string]bool{}
-	out := make([]string, 0, len(DefaultCategories))
-	for _, d := range DefaultCategories {
+	out := make([]string, 0, len(base))
+	for _, d := range base {
+		if seen[d] {
+			continue
+		}
 		seen[d] = true
 		out = append(out, d)
 	}
