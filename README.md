@@ -172,31 +172,6 @@ categories:                         # picker categories, in order (replaces the 
 - **Last-workspace cache** — recorded under `os.UserCacheDir()` (`~/Library/Caches/dw/last`
   on macOS, `~/.cache/dw/last` on Linux). Drives both the top-of-list pin and `dw -`.
 
-## Migration
-
-> **Breaking change.** Configuration moved from environment variables to
-> `~/.config/dw/config.yml`. The **`DW_ROOT` env var is no longer read** — set
-> `root:` in the config instead. Templates also moved from
-> `~/.config/discussion/templates/` to `~/.config/dw/templates/` (the old
-> `discussion` paths are no longer searched).
-
-If you relied on `DW_ROOT`, persist it once:
-
-```sh
-dw config init                       # writes ~/.config/dw/config.yml
-# then edit it: set `root:` to your old $DW_ROOT value
-```
-
-Move any custom templates to the new location:
-
-```sh
-mkdir -p ~/.config/dw/templates
-mv ~/.config/discussion/templates/* ~/.config/dw/templates/ 2>/dev/null
-```
-
-(Historical: the default root previously moved from `~/Discussion` to `~/dw`, and
-`DISCUSSION_ROOT` was renamed `DW_ROOT` before being retired here.)
-
 ## Architecture
 
 - `internal/config` — loads/resolves `~/.config/dw/config.yml` (root / templates_dir / categories), with `~` and `$ENV` expansion and built-in defaults.
