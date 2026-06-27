@@ -52,25 +52,34 @@ func Load() (Config, error) {
 	return c.Resolve(), nil
 }
 
+// Built-in default path values, in their ~-relative display form. These are the
+// single source of truth: Resolve expands them at runtime and DefaultYAML writes
+// them verbatim into the starter config, so the two can't drift.
+const (
+	defaultRoot         = "~/dw"
+	defaultTemplatesDir = "~/.config/dw/templates"
+)
+
 // Resolve fills empty fields with built-in defaults and expands ~ and $ENV in
-// the user-supplied path fields. Computed defaults are already absolute, so they
-// skip expansion (avoiding corruption when a home path contains a literal '$').
-// Categories falls back to the built-in set when the key is absent or empty.
+// the user-supplied path fields. Defaults are expanded with ~ only (never $ENV),
+// so a home path containing a literal '$' can't corrupt them. Categories falls
+// back to the built-in set when the key is absent or empty.
 func (c Config) Resolve() Config {
-	if c.Root == "" {
-		c.Root = filepath.Join(homeDir(), "dw")
-	} else {
-		c.Root = expandPath(c.Root)
-	}
-	if c.TemplatesDir == "" {
-		c.TemplatesDir = filepath.Join(configHome(), "dw", "templates")
-	} else {
-		c.TemplatesDir = expandPath(c.TemplatesDir)
-	}
+	c.Root = resolvePath(c.Root, defaultRoot)
+	c.TemplatesDir = resolvePath(c.TemplatesDir, defaultTemplatesDir)
 	if len(c.Categories) == 0 {
 		c.Categories = append([]string(nil), workspace.DefaultCategories...)
 	}
 	return c
+}
+
+// resolvePath returns the user value expanded (~ and $ENV), or the built-in
+// default expanded with ~ only — defaults are trusted and skip $ENV expansion.
+func resolvePath(v, def string) string {
+	if v == "" {
+		return expandTilde(def)
+	}
+	return expandPath(v)
 }
 
 // DefaultYAML is the starter config written by `dw config init`. Every key is
@@ -81,23 +90,23 @@ func DefaultYAML() []byte {
 	for _, c := range workspace.DefaultCategories {
 		fmt.Fprintf(&cats, "  - %s\n", c)
 	}
-	return []byte(`# dw configuration — every key is optional; omitted keys use built-in defaults.
+	return fmt.Appendf(nil, `# dw configuration — every key is optional; omitted keys use built-in defaults.
 
 # Workspace root scanned for <category>/<YYYY-MM-DD>-<topic>/ projects.
-# ~ and $ENV are expanded. Default: ~/dw
-root: ~/dw
+# ~ and $ENV are expanded. Default: %[1]s
+root: %[1]s
 
 # Directory searched for per-category templates (<category>.md, then default.md).
-# ~ and $ENV are expanded. Default: ~/.config/dw/templates
-templates_dir: ~/.config/dw/templates
+# ~ and $ENV are expanded. Default: %[2]s
+templates_dir: %[2]s
 
 # Categories offered in the picker, in order. Replaces the built-in set entirely.
 # Default: the built-in categories listed below.
 categories:
-` + cats.String())
+%[3]s`, defaultRoot, defaultTemplatesDir, cats.String())
 }
 
-// configHome returns ~/.config, where dw keeps its config and templates.
+// configHome returns ~/.config, where dw keeps its config.
 func configHome() string {
 	return filepath.Join(homeDir(), ".config")
 }
@@ -107,16 +116,20 @@ func homeDir() string {
 	return h
 }
 
-// expandPath expands a leading ~ to the home directory, then expands $ENV
-// references (e.g. $HOME, ${XDG_DATA_HOME}). Empty input stays empty.
-func expandPath(p string) string {
+// expandTilde expands a leading ~ or ~/ to the home directory; other input is
+// returned unchanged.
+func expandTilde(p string) string {
 	switch {
-	case p == "":
-		return p
 	case p == "~":
-		p = homeDir()
+		return homeDir()
 	case strings.HasPrefix(p, "~/"):
-		p = filepath.Join(homeDir(), p[2:])
+		return filepath.Join(homeDir(), p[2:])
 	}
-	return os.ExpandEnv(p)
+	return p
+}
+
+// expandPath expands a leading ~ to the home directory, then expands $ENV
+// references (e.g. $HOME, ${XDG_DATA_HOME}).
+func expandPath(p string) string {
+	return os.ExpandEnv(expandTilde(p))
 }
