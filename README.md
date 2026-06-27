@@ -19,15 +19,13 @@ $ dw
 
 ## Features
 
-- **Dated auto-layout** — workspaces live at `<root>/<category>/<YYYY-MM-DD>-<topic-slug>/`, created for you.
-- **Create on demand, no `create` command** — type a topic; if nothing matches, pick a category and `dw` makes it. Categories are created on the fly too.
-- **Category chosen after the topic** — write what you're thinking about first, file it second.
-- **Fuzzy jump** — fuzzy-match across `category/name` and titles, newest first, fzf-style.
-- **Resume instantly** — your last workspace is pinned to the top; `dw -` jumps to it with no UI.
+- **Dated auto-layout** — every topic gets its own `<category>/<YYYY-MM-DD>-<topic>/` folder with a frontmatter README, created for you.
+- **Create on demand** — type the topic first, pick a category (or invent one) second. No `create` command, no naming ceremony.
+- **Fuzzy jump & resume** — fuzzy-match across names and titles, newest first; your last workspace is pinned to the top, and `dw -` returns to it with no UI.
 - **Frontmatter-aware** — shows `status` / `tags` / `created` from each README under the selection.
-- **Scriptable primitives** — the TUI is sugar over plain commands: `dw new` creates, `dw list` (`--json`) streams, so you can compose your own flow (`dw list --json | fzf`) instead of the picker.
+- **Scriptable primitives** — the TUI is sugar over plain commands: `dw new` creates, `dw list --json` streams, so you can wire your own flow (`dw list --json | fzf`).
 - **Unicode-safe slugs** — Japanese and other scripts survive slugification (`機械学習 調査` → `機械学習-調査`).
-- **Zero-config, YAML when you want it** — works out of the box at `~/dw`; relocate the root, point templates elsewhere, or redefine categories in `~/.config/dw/config.yml`.
+- **Zero-config, YAML when you want it** — works out of the box at `~/dw`; customize root, templates, and categories in `~/.config/dw/config.yml` ([docs](docs/configuration.md)).
 
 ## Install
 
@@ -138,46 +136,11 @@ defaults offered when empty are `research`, `incident`, `discussion`, `scratch`.
 
 ## Configuration
 
-`dw` reads everything from `~/.config/dw/config.yml`. It's entirely optional —
-with no file, dw uses the built-in defaults below. Scaffold one with
-`dw config init`, then edit it:
+`dw` runs with zero config — it defaults to `~/dw` and a built-in category set.
+To relocate the workspace root, customize templates, or redefine categories, run
+`dw config init` and edit `~/.config/dw/config.yml`.
 
-```yaml
-# ~/.config/dw/config.yml — every key is optional; omitted keys use the defaults.
-root: ~/dw                          # workspace root
-templates_dir: ~/.config/dw/templates  # per-category template directory
-categories:                         # picker categories, in order (replaces the defaults)
-  - research
-  - incident
-  - discussion
-  - scratch
-```
-
-- **`root`** — workspace root. `~` and `$ENV` (e.g. `$HOME`, `${XDG_DATA_HOME}`)
-  are expanded. Default: `~/dw`.
-- **`templates_dir`** — where per-category templates live (also `~`/`$ENV`-expanded).
-  Default: `~/.config/dw/templates`. The template for a new workspace is picked
-  per category, first match wins:
-  1. `<templates_dir>/<category>.md` — per-category
-  2. `<templates_dir>/default.md` — shared default
-  3. built-in default (works with nothing configured)
-
-  All substitute `{{title}}`, `{{category}}`, `{{date}}`. Drop a
-  `<templates_dir>/research.md` to give just the `research` category its own scaffold.
-- **`categories`** — the categories offered in the picker, in order. When set it
-  **replaces** the built-in list entirely; omit it to keep the defaults.
-  Categories you create on the fly still appear automatically.
-- **`DW_CONFIG`** (env) — overrides only the config file *location* (not its
-  values). Handy for hermetic tests or keeping multiple profiles.
-- **Last-workspace cache** — recorded under `os.UserCacheDir()` (`~/Library/Caches/dw/last`
-  on macOS, `~/.cache/dw/last` on Linux). Drives both the top-of-list pin and `dw -`.
-
-## Architecture
-
-- `internal/config` — loads/resolves `~/.config/dw/config.yml` (root / templates_dir / categories), with `~` and `$ENV` expansion and built-in defaults.
-- `internal/workspace` — scanning / slugification / creation / templates / last-path persistence (pure logic, tested).
-- `internal/tui` — the single bubbletea fuzzy list (jump + create + category select + pin).
-- `main.go` — subcommand dispatch (`run()`); loads config once and wires `dw -`, `new`, `list`, `root`, `config`, `init`, `version`, `help`, and the picker. `dw new` and the picker share the same `workspace.Create` core.
+→ Full reference: **[docs/configuration.md](docs/configuration.md)**
 
 ## Development
 
