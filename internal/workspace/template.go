@@ -25,25 +25,15 @@ tags: []
 ## Conclusion / Next Actions
 `
 
-// ResolveTemplate picks the template for a category using the convention-based
-// search order, falling back to the built-in DefaultTemplate.
-func ResolveTemplate(category string) string {
-	home, _ := os.UserHomeDir()
-	dir := filepath.Join(home, ".config", "discussion", "templates")
-	legacy := filepath.Join(home, ".config", "discussion", "template.md")
-	return resolveTemplate(dir, legacy, category)
-}
-
-// resolveTemplate implements the search order with injectable paths for testing:
-//  1. <dir>/<category>.md  (category-specific)
-//  2. <dir>/default.md     (shared default)
-//  3. legacyPath           (~/.config/discussion/template.md, backward compat)
-//  4. DefaultTemplate      (built-in)
-func resolveTemplate(dir, legacyPath, category string) string {
+// ResolveTemplate picks the template for a category from templatesDir using the
+// convention-based search order, falling back to the built-in DefaultTemplate:
+//  1. <templatesDir>/<category>.md  (category-specific)
+//  2. <templatesDir>/default.md     (shared default)
+//  3. DefaultTemplate               (built-in)
+func ResolveTemplate(templatesDir, category string) string {
 	for _, p := range []string{
-		filepath.Join(dir, category+".md"),
-		filepath.Join(dir, "default.md"),
-		legacyPath,
+		filepath.Join(templatesDir, category+".md"),
+		filepath.Join(templatesDir, "default.md"),
 	} {
 		if b, err := os.ReadFile(p); err == nil {
 			return string(b)

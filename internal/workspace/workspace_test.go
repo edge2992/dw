@@ -208,24 +208,10 @@ func TestSaveAndLoadLast(t *testing.T) {
 	}
 }
 
-func TestRootEnvAndDefault(t *testing.T) {
-	// explicit DW_ROOT wins
-	t.Setenv("DW_ROOT", "/tmp/custom-root")
-	if got := Root(); got != "/tmp/custom-root" {
-		t.Errorf("Root() with DW_ROOT = %q, want /tmp/custom-root", got)
-	}
-	// empty DW_ROOT falls back to ~/dw
-	t.Setenv("DW_ROOT", "")
-	t.Setenv("HOME", "/tmp/home")
-	if got := Root(); got != filepath.Join("/tmp/home", "dw") {
-		t.Errorf("Root() default = %q, want /tmp/home/dw", got)
-	}
-}
-
 func TestCategories(t *testing.T) {
 	ps := []Project{{Category: "custom"}, {Category: "research"}}
-	cats := Categories(ps)
-	// defaults + custom, deduped
+	cats := Categories(DefaultCategories, ps)
+	// base defaults + custom, deduped
 	want := map[string]bool{"research": true, "incident": true, "discussion": true, "scratch": true, "custom": true}
 	if len(cats) != len(want) {
 		t.Errorf("got %v", cats)
@@ -233,6 +219,22 @@ func TestCategories(t *testing.T) {
 	for _, c := range cats {
 		if !want[c] {
 			t.Errorf("unexpected category %q", c)
+		}
+	}
+}
+
+func TestCategoriesReplacesBase(t *testing.T) {
+	// a config-provided base replaces the defaults wholesale, in order, and
+	// on-disk extras still get appended (sorted) after it.
+	ps := []Project{{Category: "zeta"}, {Category: "alpha"}}
+	cats := Categories([]string{"foo", "bar", "foo"}, ps)
+	want := []string{"foo", "bar", "alpha", "zeta"}
+	if len(cats) != len(want) {
+		t.Fatalf("cats = %v, want %v", cats, want)
+	}
+	for i := range want {
+		if cats[i] != want[i] {
+			t.Errorf("cats[%d] = %q, want %q (full %v)", i, cats[i], want[i], cats)
 		}
 	}
 }

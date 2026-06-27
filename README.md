@@ -19,15 +19,13 @@ $ dw
 
 ## Features
 
-- **Dated auto-layout** — workspaces live at `<root>/<category>/<YYYY-MM-DD>-<topic-slug>/`, created for you.
-- **Create on demand, no `create` command** — type a topic; if nothing matches, pick a category and `dw` makes it. Categories are created on the fly too.
-- **Category chosen after the topic** — write what you're thinking about first, file it second.
-- **Fuzzy jump** — fuzzy-match across `category/name` and titles, newest first, fzf-style.
-- **Resume instantly** — your last workspace is pinned to the top; `dw -` jumps to it with no UI.
+- **Dated auto-layout** — every topic gets its own `<category>/<YYYY-MM-DD>-<topic>/` folder with a frontmatter README, created for you.
+- **Create on demand** — type the topic first, pick a category (or invent one) second. No `create` command, no naming ceremony.
+- **Fuzzy jump & resume** — fuzzy-match across names and titles, newest first; your last workspace is pinned to the top, and `dw -` returns to it with no UI.
 - **Frontmatter-aware** — shows `status` / `tags` / `created` from each README under the selection.
-- **Scriptable primitives** — the TUI is sugar over plain commands: `dw new` creates, `dw list` (`--json`) streams, so you can compose your own flow (`dw list --json | fzf`) instead of the picker.
+- **Scriptable primitives** — the TUI is sugar over plain commands: `dw new` creates, `dw list --json` streams, so you can wire your own flow (`dw list --json | fzf`).
 - **Unicode-safe slugs** — Japanese and other scripts survive slugification (`機械学習 調査` → `機械学習-調査`).
-- **Zero-config** — defaults to `~/dw`; one env var to relocate.
+- **Zero-config, YAML when you want it** — works out of the box at `~/dw`; customize root, templates, and categories in `~/.config/dw/config.yml` ([docs](docs/configuration.md)).
 
 ## Install
 
@@ -117,6 +115,8 @@ In the picker:
 | `dw list` | List workspaces as `category/name`, one per line. |
 | `dw list --json` | List workspaces as a JSON array (includes absolute `path`). |
 | `dw root` | Print the resolved workspace root. |
+| `dw config path` | Print the resolved config file path. |
+| `dw config init` | Write a starter `config.yml` (won't overwrite an existing one). |
 | `dw init <zsh\|bash>` | Print the shell wrapper to `eval` (see Shell integration). |
 | `dw version` | Print the version. |
 | `dw help` / `-h` | Show usage. |
@@ -127,47 +127,20 @@ what makes the `dw()` wrapper and pipelines like `dw list | fzf` work.
 ## Layout
 
 ```text
-$DW_ROOT/<category>/<YYYY-MM-DD>-<topic-slug>/
+<root>/<category>/<YYYY-MM-DD>-<topic-slug>/
   README.md   # frontmatter-indexed entry point
 ```
 
-`$DW_ROOT` defaults to `~/dw`. Categories are arbitrary folders; the defaults
-offered when empty are `research`, `incident`, `discussion`, `scratch`.
+`<root>` defaults to `~/dw` (configurable). Categories are arbitrary folders; the
+defaults offered when empty are `research`, `incident`, `discussion`, `scratch`.
 
 ## Configuration
 
-- **`DW_ROOT`** — workspace root. Defaults to `~/dw`.
-- **Templates** — picked per category, first match wins:
-  1. `~/.config/discussion/templates/<category>.md` — per-category
-  2. `~/.config/discussion/templates/default.md` — shared default
-  3. `~/.config/discussion/template.md` — legacy single template (back-compat)
-  4. built-in default (works with nothing configured)
+`dw` runs with zero config — it defaults to `~/dw` and a built-in category set.
+To relocate the workspace root, customize templates, or redefine categories, run
+`dw config init` and edit `~/.config/dw/config.yml`.
 
-  All substitute `{{title}}`, `{{category}}`, `{{date}}`. Drop a
-  `~/.config/discussion/templates/research.md` to give just the `research`
-  category its own scaffold.
-- **Last-workspace cache** — recorded under `os.UserCacheDir()` (`~/Library/Caches/dw/last`
-  on macOS, `~/.cache/dw/last` on Linux). Drives both the top-of-list pin and `dw -`.
-
-## Migration
-
-> **Breaking change.** The default root moved from `~/Discussion` to `~/dw`, and the
-> environment variable was renamed `DISCUSSION_ROOT` → `DW_ROOT`. The old variable is
-> no longer read.
-
-If you have an existing `~/Discussion` tree, either point `dw` at it or move it:
-
-```sh
-export DW_ROOT=~/Discussion   # keep your data where it is
-# — or —
-mv ~/Discussion ~/dw          # adopt the new default
-```
-
-## Architecture
-
-- `internal/workspace` — scanning / slugification / creation / templates / last-path persistence (pure logic, tested).
-- `internal/tui` — the single bubbletea fuzzy list (jump + create + category select + pin).
-- `main.go` — subcommand dispatch (`run()`); wires `dw -`, `new`, `list`, `root`, `init`, `version`, `help`, and the picker. `dw new` and the picker share the same `workspace.Create` core.
+→ Full reference: **[docs/configuration.md](docs/configuration.md)**
 
 ## Development
 
