@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.6.0](https://github.com/edge2992/dw/compare/v0.5.0...v0.6.0) (2026-06-27)
+
+
+### ⚠ BREAKING CHANGES
+
+* DW_ROOT is no longer read; set `root:` in ~/.config/dw/config.yml instead. Templates moved from ~/.config/discussion/templates/ to ~/.config/dw/templates/.
+
+### Features
+
+* drive dw via ~/.config/dw/config.yml ([#19](https://github.com/edge2992/dw/issues/19)) ([42447be](https://github.com/edge2992/dw/commit/42447bee5c691d2d47d8f22d58eea4664410a75a))
+
 ## [0.5.0](https://github.com/edge2992/dw/compare/v0.4.0...v0.5.0) (2026-06-20)
 
 
