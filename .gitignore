@@ -8,3 +8,5 @@
 # tooling caches / local config
 /.claude/
 /.serena/
+/.agents
+skills-lock.json
