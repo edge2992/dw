@@ -6,9 +6,10 @@
 // wrapper cd's into it.
 //
 // Subcommands: `dw -` jumps to the last workspace, `dw new` creates one
-// non-interactively, `dw list` lists workspaces, `dw root` prints the root,
-// `dw config` manages the config file, `dw init` prints the shell wrapper,
-// `dw version` prints the version, and `dw help` shows usage.
+// non-interactively, `dw list` lists workspaces, `dw scaffold` backfills the
+// CLAUDE.md older workspaces lack, `dw root` prints the root, `dw config`
+// manages the config file, `dw init` prints the shell wrapper, `dw version`
+// prints the version, and `dw help` shows usage.
 package main
 
 import (
@@ -41,6 +42,7 @@ Usage:
   dw -                     Jump to the last workspace (prints its path)
   dw new <topic> -c <cat>  Create a workspace non-interactively (prints its path)
   dw list [--json]         List workspaces (category/name, or JSON)
+  dw scaffold [-c <cat>]   Write the missing CLAUDE.md into existing workspaces
   dw root                  Print the workspace root
   dw config <path|init>    Print the config path, or write a starter config
   dw init <zsh|bash>       Print the shell wrapper that cd's into chosen paths
@@ -90,6 +92,8 @@ func run(argv []string, stdout, stderr io.Writer, now time.Time) int {
 	switch argv[1] {
 	case "new":
 		return cmdNew(cfg, stdout, stderr, argv[2:], now)
+	case "scaffold":
+		return cmdScaffold(cfg, stdout, stderr, argv[2:])
 	case "list":
 		return cmdList(cfg, stdout, stderr, argv[2:])
 	case "root":
@@ -201,8 +205,8 @@ func cmdNew(cfg config.Config, stdout, stderr io.Writer, args []string, now time
 	// so `dw new -c "My Cat"` and the picker both land in my-cat/, never two
 	// directories for the same logical category.
 	category = catSlug
-	tmpl := workspace.ResolveTemplate(cfg.TemplatesDir, category)
-	p, err := workspace.Create(cfg.Root, category, topic, now, tmpl)
+	tmpls := workspace.ResolveTemplates(cfg.TemplatesDir, category)
+	p, err := workspace.Create(cfg.Root, category, topic, now, tmpls)
 	if err != nil {
 		fmt.Fprintln(stderr, "dw:", err)
 		return 1
@@ -243,6 +247,68 @@ func cmdInit(stdout, stderr io.Writer, args []string) int {
 		fmt.Fprintf(stderr, "dw init: unsupported shell %q (supported: zsh, bash)\n", args[0])
 		return 2
 	}
+}
+
+// cmdScaffold backfills the CLAUDE.md that workspaces created before dw
+// scaffolded one are missing (`dw scaffold [-c <cat>] [--dry-run]`). Existing
+// files are never touched, so it is safe to re-run and needs no confirmation.
+func cmdScaffold(cfg config.Config, stdout, stderr io.Writer, args []string) int {
+	fs := flag.NewFlagSet("scaffold", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	category := fs.String("c", "", "only scaffold this category")
+	fs.StringVar(category, "category", "", "only scaffold this category")
+	dryRun := fs.Bool("dry-run", false, "report what would be written without writing")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if fs.NArg() > 0 {
+		fmt.Fprintf(stderr, "dw scaffold: unexpected argument %q\n", fs.Arg(0))
+		return 2
+	}
+	projects, err := workspace.Scan(cfg.Root)
+	if err != nil {
+		fmt.Fprintln(stderr, "dw: scan:", err)
+		return 1
+	}
+
+	// Resolving templates is per-category, so cache it: a root with hundreds of
+	// workspaces would otherwise stat the templates dir once per project.
+	tmplFor := map[string]string{}
+	n := 0
+	for _, p := range projects {
+		if *category != "" && p.Category != *category {
+			continue
+		}
+		claude := filepath.Join(p.Path, "CLAUDE.md")
+		if *dryRun {
+			if _, err := os.Stat(claude); err == nil {
+				continue
+			}
+			fmt.Fprintln(stdout, claude)
+			n++
+			continue
+		}
+		tmpl, ok := tmplFor[p.Category]
+		if !ok {
+			tmpl = workspace.ResolveClaudeTemplate(cfg.TemplatesDir, p.Category)
+			tmplFor[p.Category] = tmpl
+		}
+		wrote, err := workspace.EnsureClaudeMD(p, tmpl)
+		if err != nil {
+			fmt.Fprintln(stderr, "dw scaffold:", err)
+			return 1
+		}
+		if wrote {
+			fmt.Fprintln(stdout, claude)
+			n++
+		}
+	}
+	verb := "wrote"
+	if *dryRun {
+		verb = "would write"
+	}
+	fmt.Fprintf(stdout, "%s %d CLAUDE.md\n", verb, n)
+	return 0
 }
 
 // cmdList prints every workspace as "category/name" lines, or as JSON with --json.

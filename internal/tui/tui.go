@@ -247,9 +247,9 @@ func (m Model) onEnter() (tea.Model, tea.Cmd) {
 	}
 
 	// modeCategory: r.label is the category (existing or new). Resolve the
-	// template now that the category is known so per-category templates apply.
-	tmpl := workspace.ResolveTemplate(m.templatesDir, r.label)
-	p, err := workspace.Create(m.root, r.label, m.pendingTopic, m.now, tmpl)
+	// templates now that the category is known so per-category ones apply.
+	tmpls := workspace.ResolveTemplates(m.templatesDir, r.label)
+	p, err := workspace.Create(m.root, r.label, m.pendingTopic, m.now, tmpls)
 	if err != nil {
 		m.Err = err
 		return m, tea.Quit

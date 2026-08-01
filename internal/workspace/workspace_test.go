@@ -8,6 +8,12 @@ import (
 	"time"
 )
 
+// testTemplates is what Create receives when a test doesn't care about template
+// contents — the built-ins, exactly as the real callers resolve them.
+func testTemplates(category string) Templates {
+	return Templates{README: DefaultTemplate, ClaudeMD: DefaultClaudeTemplate(category)}
+}
+
 func TestSlugify(t *testing.T) {
 	cases := map[string]string{
 		"k8s pod oom":     "k8s-pod-oom",
@@ -53,7 +59,7 @@ func TestCreateAndScan(t *testing.T) {
 	root := t.TempDir()
 	now := time.Date(2026, 6, 14, 10, 0, 0, 0, time.UTC)
 
-	p, err := Create(root, "research", "K8s Pod OOM", now, DefaultTemplate)
+	p, err := Create(root, "research", "K8s Pod OOM", now, testTemplates("research"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,7 +77,7 @@ func TestCreateAndScan(t *testing.T) {
 
 	// second, older project to verify ordering
 	older := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
-	if _, err := Create(root, "incident", "db outage", older, DefaultTemplate); err != nil {
+	if _, err := Create(root, "incident", "db outage", older, testTemplates("incident")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -93,7 +99,7 @@ func TestCreateTitleKeepsTypedTopic(t *testing.T) {
 	now := time.Date(2026, 6, 14, 0, 0, 0, 0, time.UTC)
 
 	// casing and spaces survive into the README title, while the dir is slugged
-	p, err := Create(root, "research", "Rust GC 設計メモ", now, DefaultTemplate)
+	p, err := Create(root, "research", "Rust GC 設計メモ", now, testTemplates("research"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +111,7 @@ func TestCreateTitleKeepsTypedTopic(t *testing.T) {
 	}
 
 	// symbol-only input has no slug, so both dir and title fall back to "untitled"
-	p2, err := Create(root, "research", "!!!", now, DefaultTemplate)
+	p2, err := Create(root, "research", "!!!", now, testTemplates("research"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,19 +123,155 @@ func TestCreateTitleKeepsTypedTopic(t *testing.T) {
 func TestCreateDoesNotClobberReadme(t *testing.T) {
 	root := t.TempDir()
 	now := time.Date(2026, 6, 14, 0, 0, 0, 0, time.UTC)
-	p, _ := Create(root, "research", "topic", now, DefaultTemplate)
+	p, _ := Create(root, "research", "topic", now, testTemplates("research"))
 	custom := "EDITED BY USER"
 	if err := os.WriteFile(filepath.Join(p.Path, "README.md"), []byte(custom), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
 	// re-create same project: must not overwrite
-	if _, err := Create(root, "research", "topic", now, DefaultTemplate); err != nil {
+	if _, err := Create(root, "research", "topic", now, testTemplates("research")); err != nil {
 		t.Fatal(err)
 	}
 	b, _ := os.ReadFile(filepath.Join(p.Path, "README.md"))
 	if string(b) != custom {
 		t.Errorf("README was clobbered: %q", string(b))
+	}
+}
+
+func TestCreateWritesClaudeMD(t *testing.T) {
+	root := t.TempDir()
+	now := time.Date(2026, 6, 14, 0, 0, 0, 0, time.UTC)
+	p, err := Create(root, "research", "K8s Pod OOM", now, testTemplates("research"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(filepath.Join(p.Path, "CLAUDE.md"))
+	if err != nil {
+		t.Fatalf("CLAUDE.md not created: %v", err)
+	}
+	got := string(b)
+	want := RenderTemplate(DefaultClaudeTemplate("research"), "K8s Pod OOM", "research", "2026-06-14")
+	if got != want {
+		t.Errorf("CLAUDE.md = %q, want %q", got, want)
+	}
+	if strings.Contains(got, "{{") {
+		t.Errorf("placeholder left unrendered:\n%s", got)
+	}
+}
+
+func TestCreateDoesNotClobberClaudeMD(t *testing.T) {
+	root := t.TempDir()
+	now := time.Date(2026, 6, 14, 0, 0, 0, 0, time.UTC)
+	p, _ := Create(root, "research", "topic", now, testTemplates("research"))
+	custom := "EDITED BY USER"
+	claude := filepath.Join(p.Path, "CLAUDE.md")
+	if err := os.WriteFile(claude, []byte(custom), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Create(root, "research", "topic", now, testTemplates("research")); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(claude)
+	if string(b) != custom {
+		t.Errorf("CLAUDE.md was clobbered: %q", string(b))
+	}
+}
+
+func TestEnsureClaudeMD(t *testing.T) {
+	root := t.TempDir()
+	// a workspace as it looked before dw scaffolded CLAUDE.md: README only
+	dir := filepath.Join(root, "research", "2026-06-14-legacy")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	readme := "---\ntitle: Legacy Notes\n---\n\n# body\n"
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte(readme), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	projects, err := Scan(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(projects) != 1 {
+		t.Fatalf("scan found %d projects, want 1", len(projects))
+	}
+
+	tmpl := DefaultClaudeTemplate("research")
+	wrote, err := EnsureClaudeMD(projects[0], tmpl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !wrote {
+		t.Fatal("EnsureClaudeMD reported no write for a missing CLAUDE.md")
+	}
+	b, err := os.ReadFile(filepath.Join(dir, "CLAUDE.md"))
+	if err != nil {
+		t.Fatalf("CLAUDE.md not written: %v", err)
+	}
+	// rendered from the frontmatter title and the dir's date prefix
+	if want := RenderTemplate(tmpl, "Legacy Notes", "research", "2026-06-14"); string(b) != want {
+		t.Errorf("CLAUDE.md = %q, want %q", string(b), want)
+	}
+
+	// re-running is a no-op, and never touches a file the user has edited
+	custom := "EDITED BY USER"
+	if err := os.WriteFile(filepath.Join(dir, "CLAUDE.md"), []byte(custom), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	wrote, err = EnsureClaudeMD(projects[0], tmpl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wrote {
+		t.Error("EnsureClaudeMD reported a write for an existing CLAUDE.md")
+	}
+	b, _ = os.ReadFile(filepath.Join(dir, "CLAUDE.md"))
+	if string(b) != custom {
+		t.Errorf("CLAUDE.md was clobbered: %q", string(b))
+	}
+}
+
+func TestEnsureClaudeMDUndatedDirUsesCreated(t *testing.T) {
+	root := t.TempDir()
+	// no date prefix, so the date has to come from the frontmatter instead
+	dir := filepath.Join(root, "scratch", "legacy-notes")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	readme := "---\ntitle: Legacy\ncreated: 2026-01-02\n---\n"
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte(readme), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	projects, _ := Scan(root)
+	tmpl := "{{title}}|{{category}}|{{date}}"
+	if _, err := EnsureClaudeMD(projects[0], tmpl); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(filepath.Join(dir, "CLAUDE.md"))
+	if want := "Legacy|scratch|2026-01-02"; string(b) != want {
+		t.Errorf("CLAUDE.md = %q, want %q", string(b), want)
+	}
+}
+
+func TestEnsureClaudeMDDoesNotFollowDanglingSymlink(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "outside.md")
+	claude := filepath.Join(dir, "CLAUDE.md")
+	if err := os.Symlink(target, claude); err != nil {
+		t.Fatal(err)
+	}
+	p := Project{Path: dir, Title: "Legacy", Category: "research"}
+
+	wrote, err := EnsureClaudeMD(p, "scaffolded")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wrote {
+		t.Error("EnsureClaudeMD reported a write for an existing symlink")
+	}
+	if _, err := os.Stat(target); !os.IsNotExist(err) {
+		t.Errorf("dangling symlink target was written: %v", err)
 	}
 }
 
