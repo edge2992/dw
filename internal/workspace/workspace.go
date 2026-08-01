@@ -142,9 +142,9 @@ func Categories(base []string, projects []Project) []string {
 // and that value is what Categories receives as its base.
 var DefaultCategories = []string{"research", "incident", "discussion", "scratch"}
 
-// Create makes <root>/<category>/<date>-<slug>/ with a README rendered from tmpl.
-// now supplies the date so callers/tests stay deterministic.
-func Create(root, category, topic string, now time.Time, tmpl string) (Project, error) {
+// Create makes <root>/<category>/<date>-<slug>/ with a README and a CLAUDE.md
+// rendered from tmpls. now supplies the date so callers/tests stay deterministic.
+func Create(root, category, topic string, now time.Time, tmpls Templates) (Project, error) {
 	date := now.Format("2006-01-02")
 	// The directory name is slugified, but the README title keeps the topic the
 	// user actually typed (casing and spaces), since that title is what the list
@@ -161,15 +161,43 @@ func Create(root, category, topic string, now time.Time, tmpl string) (Project, 
 	if err := os.MkdirAll(path, 0o755); err != nil {
 		return Project{}, err
 	}
-	readme := filepath.Join(path, "README.md")
-	if _, err := os.Stat(readme); err != nil {
-		if !os.IsNotExist(err) {
-			return Project{}, err
-		}
-		content := RenderTemplate(tmpl, title, category, date)
-		if err := os.WriteFile(readme, []byte(content), 0o644); err != nil {
+	for _, f := range []struct{ name, tmpl string }{
+		{"README.md", tmpls.README},
+		{"CLAUDE.md", tmpls.ClaudeMD},
+	} {
+		content := RenderTemplate(f.tmpl, title, category, date)
+		if _, err := writeIfAbsent(filepath.Join(path, f.name), content); err != nil {
 			return Project{}, err
 		}
 	}
 	return parseProject(category, name, path), nil
+}
+
+// EnsureClaudeMD writes p's CLAUDE.md from tmpl when the file is missing,
+// reporting whether it wrote one. It backfills workspaces created before dw
+// scaffolded CLAUDE.md; an existing file is always left alone.
+func EnsureClaudeMD(p Project, tmpl string) (bool, error) {
+	// Undated directories have no Date to render, so fall back to the frontmatter
+	// created: value rather than leaving the placeholder in the output.
+	date := p.Date
+	if date == "" {
+		date = p.Created
+	}
+	content := RenderTemplate(tmpl, p.Title, p.Category, date)
+	return writeIfAbsent(filepath.Join(p.Path, "CLAUDE.md"), content)
+}
+
+// writeIfAbsent writes content to path unless the file already exists, and
+// reports whether it wrote. Scaffolding must never clobber a file the user has
+// since edited, so every write in this package goes through here.
+func writeIfAbsent(path, content string) (bool, error) {
+	if _, err := os.Stat(path); err == nil {
+		return false, nil
+	} else if !os.IsNotExist(err) {
+		return false, err
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		return false, err
+	}
+	return true, nil
 }

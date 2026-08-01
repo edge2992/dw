@@ -104,6 +104,9 @@ func TestCreateFlow(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(want, "README.md")); err != nil {
 		t.Fatalf("README not created: %v", err)
 	}
+	if _, err := os.Stat(filepath.Join(want, "CLAUDE.md")); err != nil {
+		t.Fatalf("CLAUDE.md not created: %v", err)
+	}
 }
 
 func TestNewCategoryCreation(t *testing.T) {
@@ -303,5 +306,44 @@ func TestCreateUsesCategoryTemplate(t *testing.T) {
 	got := string(b)
 	if got != "CATEGORY BODY" {
 		t.Fatalf("README = %q, want category template body", got)
+	}
+}
+
+func TestCreateUsesCategoryClaudeTemplate(t *testing.T) {
+	tmplDir := t.TempDir()
+	cat := defaultCats[0] // first default category offered
+	if err := os.WriteFile(filepath.Join(tmplDir, cat+".CLAUDE.md"), []byte("CLAUDE BODY {{category}}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	root := t.TempDir()
+	now := time.Date(2026, 6, 14, 0, 0, 0, 0, time.UTC)
+	m := New(root, now, nil, "", defaultCats, tmplDir)
+
+	m = typeStr(m, "topic")
+	rows := m.rows()
+	for i := 0; i < len(rows)-1; i++ {
+		m = send(m, "down")
+	}
+	m = send(m, "enter") // -> category mode
+	m = send(m, "enter") // confirm cat
+
+	if m.Result == "" {
+		t.Fatalf("create did not produce a Result path (Err=%v)", m.Err)
+	}
+	b, err := os.ReadFile(filepath.Join(m.Result, "CLAUDE.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "CLAUDE BODY " + cat; string(b) != want {
+		t.Fatalf("CLAUDE.md = %q, want %q", string(b), want)
+	}
+	// the README template is resolved independently and still falls back
+	rb, err := os.ReadFile(filepath.Join(m.Result, "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(rb), "## Research Log") {
+		t.Errorf("README should still use the built-in template, got %q", string(rb))
 	}
 }

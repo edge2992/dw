@@ -24,16 +24,24 @@ func testCfg(root string) config.Config {
 	}
 }
 
+// builtinTemplates is what the real callers resolve when no templates dir exists.
+func builtinTemplates(category string) workspace.Templates {
+	return workspace.Templates{
+		README:   workspace.DefaultTemplate,
+		ClaudeMD: workspace.DefaultClaudeTemplate(category),
+	}
+}
+
 // seed creates two projects under a temp root and returns a Config pointing at it.
 func seed(t *testing.T) config.Config {
 	t.Helper()
 	root := t.TempDir()
 	now := time.Date(2026, 6, 14, 0, 0, 0, 0, time.UTC)
 	older := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
-	if _, err := workspace.Create(root, "research", "k8s pod oom", now, workspace.DefaultTemplate); err != nil {
+	if _, err := workspace.Create(root, "research", "k8s pod oom", now, builtinTemplates("research")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := workspace.Create(root, "incident", "db outage", older, workspace.DefaultTemplate); err != nil {
+	if _, err := workspace.Create(root, "incident", "db outage", older, builtinTemplates("incident")); err != nil {
 		t.Fatal(err)
 	}
 	return testCfg(root)
@@ -167,6 +175,9 @@ func TestCmdNew(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(path, "README.md")); err != nil {
 		t.Errorf("README.md not created: %v", err)
 	}
+	if _, err := os.Stat(filepath.Join(path, "CLAUDE.md")); err != nil {
+		t.Errorf("CLAUDE.md not created: %v", err)
+	}
 	// SaveLast ran, so `dw -` resolves to the same path.
 	var jout, jerr bytes.Buffer
 	if code := cmdJump(&jout, &jerr); code != 0 {
@@ -259,6 +270,140 @@ func TestCmdNewUnslugifiableCategory(t *testing.T) {
 	}
 	if entries, _ := os.ReadDir(cfg.Root); len(entries) != 0 {
 		t.Errorf("nothing should be created, got %v", entries)
+	}
+}
+
+// stripClaudeMD removes the CLAUDE.md from every seeded workspace, reproducing
+// a root created before dw scaffolded one. Returns the paths it removed.
+func stripClaudeMD(t *testing.T, cfg config.Config) []string {
+	t.Helper()
+	projects, err := workspace.Scan(cfg.Root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var removed []string
+	for _, p := range projects {
+		claude := filepath.Join(p.Path, "CLAUDE.md")
+		if err := os.Remove(claude); err != nil {
+			t.Fatal(err)
+		}
+		removed = append(removed, claude)
+	}
+	return removed
+}
+
+func TestCmdScaffold(t *testing.T) {
+	cfg := seed(t)
+	removed := stripClaudeMD(t, cfg)
+	if len(removed) != 2 {
+		t.Fatalf("expected 2 seeded workspaces, got %d", len(removed))
+	}
+
+	var out, errb bytes.Buffer
+	if code := cmdScaffold(cfg, &out, &errb, nil); code != 0 {
+		t.Fatalf("exit = %d, stderr = %s", code, errb.String())
+	}
+	for _, claude := range removed {
+		if _, err := os.Stat(claude); err != nil {
+			t.Errorf("CLAUDE.md not backfilled at %q: %v", claude, err)
+		}
+		if !strings.Contains(out.String(), claude) {
+			t.Errorf("stdout %q missing %q", out.String(), claude)
+		}
+	}
+	if !strings.Contains(out.String(), "wrote 2 CLAUDE.md") {
+		t.Errorf("stdout = %q, want a 'wrote 2' summary", out.String())
+	}
+	// per-category built-ins, not one generic file for everything
+	research, _ := os.ReadFile(removed[0])
+	incident, _ := os.ReadFile(removed[1])
+	if string(research) == string(incident) {
+		t.Errorf("research and incident got identical CLAUDE.md:\n%s", research)
+	}
+
+	// re-running is a no-op
+	var out2, errb2 bytes.Buffer
+	if code := cmdScaffold(cfg, &out2, &errb2, nil); code != 0 {
+		t.Fatalf("second run exit = %d, stderr = %s", code, errb2.String())
+	}
+	if !strings.Contains(out2.String(), "wrote 0 CLAUDE.md") {
+		t.Errorf("second run stdout = %q, want 'wrote 0'", out2.String())
+	}
+}
+
+func TestCmdScaffoldDryRun(t *testing.T) {
+	cfg := seed(t)
+	removed := stripClaudeMD(t, cfg)
+
+	var out, errb bytes.Buffer
+	if code := cmdScaffold(cfg, &out, &errb, []string{"--dry-run"}); code != 0 {
+		t.Fatalf("exit = %d, stderr = %s", code, errb.String())
+	}
+	for _, claude := range removed {
+		if _, err := os.Stat(claude); !os.IsNotExist(err) {
+			t.Errorf("--dry-run wrote %q", claude)
+		}
+		if !strings.Contains(out.String(), claude) {
+			t.Errorf("stdout %q missing %q", out.String(), claude)
+		}
+	}
+	if !strings.Contains(out.String(), "would write 2 CLAUDE.md") {
+		t.Errorf("stdout = %q, want a 'would write 2' summary", out.String())
+	}
+}
+
+func TestCmdScaffoldCategory(t *testing.T) {
+	cfg := seed(t)
+	removed := stripClaudeMD(t, cfg)
+
+	var out, errb bytes.Buffer
+	if code := cmdScaffold(cfg, &out, &errb, []string{"-c", "research"}); code != 0 {
+		t.Fatalf("exit = %d, stderr = %s", code, errb.String())
+	}
+	if !strings.Contains(out.String(), "wrote 1 CLAUDE.md") {
+		t.Errorf("stdout = %q, want 'wrote 1'", out.String())
+	}
+	for _, claude := range removed {
+		_, err := os.Stat(claude)
+		inResearch := strings.Contains(claude, "research")
+		if inResearch && err != nil {
+			t.Errorf("research CLAUDE.md not written: %v", err)
+		}
+		if !inResearch && !os.IsNotExist(err) {
+			t.Errorf("non-selected category was scaffolded: %q", claude)
+		}
+	}
+}
+
+func TestCmdScaffoldUsesCategoryTemplate(t *testing.T) {
+	cfg := seed(t)
+	stripClaudeMD(t, cfg)
+	if err := os.MkdirAll(cfg.TemplatesDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	tmpl := filepath.Join(cfg.TemplatesDir, "research.CLAUDE.md")
+	if err := os.WriteFile(tmpl, []byte("SENTINEL {{title}}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var out, errb bytes.Buffer
+	if code := cmdScaffold(cfg, &out, &errb, []string{"-c", "research"}); code != 0 {
+		t.Fatalf("exit = %d, stderr = %s", code, errb.String())
+	}
+	b, err := os.ReadFile(filepath.Join(cfg.Root, "research", "2026-06-14-k8s-pod-oom", "CLAUDE.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "SENTINEL k8s pod oom"; string(b) != want {
+		t.Errorf("CLAUDE.md = %q, want %q", string(b), want)
+	}
+}
+
+func TestCmdScaffoldUnexpectedArg(t *testing.T) {
+	cfg := seed(t)
+	var out, errb bytes.Buffer
+	if code := cmdScaffold(cfg, &out, &errb, []string{"stray"}); code != 2 {
+		t.Errorf("exit = %d, want 2", code)
 	}
 }
 
