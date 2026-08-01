@@ -166,11 +166,17 @@ func Create(root, category, topic string, now time.Time, tmpls Templates) (Proje
 		{"CLAUDE.md", tmpls.ClaudeMD},
 	} {
 		content := RenderTemplate(f.tmpl, title, category, date)
-		if _, err := writeIfAbsent(filepath.Join(path, f.name), content); err != nil {
+		if _, err := writeIfAbsent(filepath.Join(path, f.name), content, 0o644); err != nil {
 			return Project{}, err
 		}
 	}
-	return parseProject(category, name, path), nil
+	p := parseProject(category, name, path)
+	// The .claude/ plumbing rides along with every new workspace, so a fresh
+	// one and a `dw scaffold`ed old one end up identical.
+	if _, err := EnsureClaudeSettings(p); err != nil {
+		return Project{}, err
+	}
+	return p, nil
 }
 
 // EnsureClaudeMD writes p's CLAUDE.md from tmpl when the file is missing,
@@ -184,14 +190,14 @@ func EnsureClaudeMD(p Project, tmpl string) (bool, error) {
 		date = p.Created
 	}
 	content := RenderTemplate(tmpl, p.Title, p.Category, date)
-	return writeIfAbsent(filepath.Join(p.Path, "CLAUDE.md"), content)
+	return writeIfAbsent(filepath.Join(p.Path, "CLAUDE.md"), content, 0o644)
 }
 
 // writeIfAbsent writes content to path unless the file already exists, and
 // reports whether it wrote. Scaffolding must never clobber a file the user has
 // since edited, so every write in this package goes through here.
-func writeIfAbsent(path, content string) (bool, error) {
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+func writeIfAbsent(path, content string, mode os.FileMode) (bool, error) {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
 	if os.IsExist(err) {
 		return false, nil
 	}

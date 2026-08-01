@@ -31,8 +31,9 @@ Workspace root. A leading `~` and `$ENV` references (e.g. `$HOME`,
 ### `templates_dir`
 
 Directory holding per-category templates (also `~`/`$ENV`-expanded). Default:
-`~/.config/dw/templates`. A new workspace gets two files, each resolved per
-category, first match wins.
+`~/.config/dw/templates`. A new workspace gets two templated files, each resolved
+per category, first match wins. (It also gets a `.claude/` directory, which is
+*not* templated — see [Claude Code integration](#claude-code-integration-claude).)
 
 `README.md`:
 
@@ -61,12 +62,49 @@ The categories offered in the picker, in order. When set it **replaces** the
 built-in list entirely; omit it (or use `[]`) to keep the defaults. Categories
 you create on the fly still appear automatically.
 
-## Backfilling `CLAUDE.md`
+## Claude Code integration (`.claude/`)
 
-Workspaces created before `dw` scaffolded `CLAUDE.md` don't have one.
-`dw scaffold` walks the root and writes the missing ones, resolving each from its
-own category's template. It never touches an existing file, so it is safe to
-re-run and needs no confirmation.
+Every workspace carries its own Claude Code project config, so a session started
+inside it can pick up where the last one left off:
+
+```text
+<workspace>/
+  .claude/
+    settings.json               # registers the Stop hook below
+    rules/dw-workspace.md       # auto-loaded at startup; says to read the checkpoint
+    hooks/checkpoint.sh         # writes the checkpoint (mode 0755)
+  .dw/last-session.md           # the checkpoint itself
+```
+
+At the end of every turn the `Stop` hook writes `.dw/last-session.md`: YAML
+frontmatter with `session_id` and `ended_at`, then the turn's final message,
+verbatim. It is a **snapshot, not a log** — each turn replaces the last. On the
+next startup `rules/dw-workspace.md` tells Claude to read it, and to treat it as
+a draft of where you left off rather than as verified fact. Durable conclusions
+belong in `README.md`.
+
+Notes:
+
+- **Scope.** Because `settings.json` lives inside the workspace, the hook only
+  runs for sessions started there. Your other repositories are untouched — this
+  is why `dw` scaffolds a project-local config instead of a global hook.
+- **No LLM, no delay.** The hook only reformats what Claude Code hands it on
+  stdin. Nothing is summarized and nothing is waited on.
+- **Requires `jq`.** Without it the hook exits quietly and no checkpoint is
+  written; everything else keeps working.
+- **Not templated.** Unlike `README.md` and `CLAUDE.md`, these three files have
+  fixed contents and cannot be overridden through `templates_dir`.
+- **Never overwritten.** If you already have a `.claude/settings.json`, `dw`
+  leaves it alone — which also means the `Stop` hook is not registered. Merge the
+  `hooks.Stop` entry into your own file by hand, or delete it and re-run
+  `dw scaffold`.
+
+## Backfilling existing workspaces
+
+Workspaces created before `dw` scaffolded `CLAUDE.md` and `.claude/` don't have
+them. `dw scaffold` walks the root and writes whatever is missing, resolving each
+`CLAUDE.md` from its own category's template. It never touches an existing file,
+so it is safe to re-run and needs no confirmation.
 
 ```sh
 dw scaffold                 # backfill everything

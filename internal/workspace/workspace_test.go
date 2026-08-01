@@ -178,6 +178,22 @@ func TestCreateDoesNotClobberClaudeMD(t *testing.T) {
 	}
 }
 
+func TestCreateWritesClaudeSettings(t *testing.T) {
+	root := t.TempDir()
+	now := time.Date(2026, 6, 14, 0, 0, 0, 0, time.UTC)
+	p, err := Create(root, "research", "K8s Pod OOM", now, testTemplates("research"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A workspace is only Claude-ready once the whole .claude/ tree is there,
+	// so Create must not stop at README.md and CLAUDE.md.
+	for _, rel := range claudeAssetDests {
+		if _, err := os.Stat(filepath.Join(p.Path, rel)); err != nil {
+			t.Errorf("%s not created: %v", rel, err)
+		}
+	}
+}
+
 func TestEnsureClaudeMD(t *testing.T) {
 	root := t.TempDir()
 	// a workspace as it looked before dw scaffolded CLAUDE.md: README only

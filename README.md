@@ -24,6 +24,7 @@ $ dw
 - **Fuzzy jump & resume** — fuzzy-match across names and titles, newest first; your last workspace is pinned to the top, and `dw -` returns to it with no UI.
 - **Frontmatter-aware** — shows `status` / `tags` / `created` from each README under the selection.
 - **Claude-ready** — every workspace also gets a `CLAUDE.md`, three lines of guidance tuned to its category (`research` and `incident` call for different habits). Override it per category like any template; `dw scaffold` backfills older workspaces.
+- **Picks up where you left off** — each workspace carries its own `.claude/` config: a `Stop` hook checkpoints the session into `.dw/last-session.md`, and a project rule tells the next session to read it. Scoped to the workspace, so your other repos are untouched.
 - **Scriptable primitives** — the TUI is sugar over plain commands: `dw new` creates, `dw list --json` streams, so you can wire your own flow (`dw list --json | fzf`).
 - **Unicode-safe slugs** — Japanese and other scripts survive slugification (`機械学習 調査` → `機械学習-調査`).
 - **Zero-config, YAML when you want it** — works out of the box at `~/dw`; customize root, templates, and categories in `~/.config/dw/config.yml` ([docs](docs/configuration.md)).
@@ -115,7 +116,7 @@ In the picker:
 | `dw new <topic> -c <cat>` | Create a workspace non-interactively; prints its path. |
 | `dw list` | List workspaces as `category/name`, one per line. |
 | `dw list --json` | List workspaces as a JSON array (includes absolute `path`). |
-| `dw scaffold [-c <cat>]` | Write the missing `CLAUDE.md` into existing workspaces; `--dry-run` to preview. |
+| `dw scaffold [-c <cat>]` | Write the missing `CLAUDE.md` and `.claude/` files into existing workspaces; `--dry-run` to preview. |
 | `dw root` | Print the resolved workspace root. |
 | `dw config path` | Print the resolved config file path. |
 | `dw config init` | Write a starter `config.yml` (won't overwrite an existing one). |
@@ -130,12 +131,22 @@ what makes the `dw()` wrapper and pipelines like `dw list | fzf` work.
 
 ```text
 <root>/<category>/<YYYY-MM-DD>-<topic-slug>/
-  README.md   # frontmatter-indexed entry point
-  CLAUDE.md   # how to work in this topic, per category
+  README.md                     # frontmatter-indexed entry point
+  CLAUDE.md                     # how to work in this topic, per category
+  .claude/
+    settings.json               # enables the Stop hook, in this workspace only
+    rules/dw-workspace.md       # tells Claude to read the checkpoint on startup
+    hooks/checkpoint.sh         # writes the checkpoint at the end of each turn
+  .dw/last-session.md           # the checkpoint (written by the hook, not by dw)
 ```
 
 `<root>` defaults to `~/dw` (configurable). Categories are arbitrary folders; the
 defaults offered when empty are `research`, `incident`, `discussion`, `scratch`.
+
+`README.md` and `CLAUDE.md` are yours to edit and to override per category. The
+`.claude/` files are dw's plumbing: fixed contents, never templated — but never
+overwritten either, so an edited one stays edited.
+[Details](docs/configuration.md#claude-code-integration-claude).
 
 ## Configuration
 
