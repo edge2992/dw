@@ -191,12 +191,18 @@ func EnsureClaudeMD(p Project, tmpl string) (bool, error) {
 // reports whether it wrote. Scaffolding must never clobber a file the user has
 // since edited, so every write in this package goes through here.
 func writeIfAbsent(path, content string) (bool, error) {
-	if _, err := os.Stat(path); err == nil {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if os.IsExist(err) {
 		return false, nil
-	} else if !os.IsNotExist(err) {
+	}
+	if err != nil {
 		return false, err
 	}
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+	if _, err := f.Write([]byte(content)); err != nil {
+		_ = f.Close()
+		return false, err
+	}
+	if err := f.Close(); err != nil {
 		return false, err
 	}
 	return true, nil

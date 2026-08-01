@@ -254,6 +254,27 @@ func TestEnsureClaudeMDUndatedDirUsesCreated(t *testing.T) {
 	}
 }
 
+func TestEnsureClaudeMDDoesNotFollowDanglingSymlink(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "outside.md")
+	claude := filepath.Join(dir, "CLAUDE.md")
+	if err := os.Symlink(target, claude); err != nil {
+		t.Fatal(err)
+	}
+	p := Project{Path: dir, Title: "Legacy", Category: "research"}
+
+	wrote, err := EnsureClaudeMD(p, "scaffolded")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wrote {
+		t.Error("EnsureClaudeMD reported a write for an existing symlink")
+	}
+	if _, err := os.Stat(target); !os.IsNotExist(err) {
+		t.Errorf("dangling symlink target was written: %v", err)
+	}
+}
+
 func TestScanMissingRoot(t *testing.T) {
 	projects, err := Scan(filepath.Join(t.TempDir(), "does-not-exist"))
 	if err != nil {
