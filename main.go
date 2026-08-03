@@ -7,9 +7,9 @@
 //
 // Subcommands: `dw -` jumps to the last workspace, `dw new` creates one
 // non-interactively, `dw list` lists workspaces, `dw scaffold` backfills the
-// CLAUDE.md older workspaces lack, `dw root` prints the root, `dw config`
-// manages the config file, `dw init` prints the shell wrapper, `dw version`
-// prints the version, and `dw help` shows usage.
+// CLAUDE.md and .claude/ files older workspaces lack, `dw root` prints the root,
+// `dw config` manages the config file, `dw init` prints the shell wrapper,
+// `dw version` prints the version, and `dw help` shows usage.
 package main
 
 import (
@@ -42,7 +42,7 @@ Usage:
   dw -                     Jump to the last workspace (prints its path)
   dw new <topic> -c <cat>  Create a workspace non-interactively (prints its path)
   dw list [--json]         List workspaces (category/name, or JSON)
-  dw scaffold [-c <cat>]   Write the missing CLAUDE.md into existing workspaces
+  dw scaffold [-c <cat>]   Write the missing CLAUDE.md / .claude/ files into existing workspaces
   dw root                  Print the workspace root
   dw config <path|init>    Print the config path, or write a starter config
   dw init <zsh|bash>       Print the shell wrapper that cd's into chosen paths
@@ -249,9 +249,11 @@ func cmdInit(stdout, stderr io.Writer, args []string) int {
 	}
 }
 
-// cmdScaffold backfills the CLAUDE.md that workspaces created before dw
-// scaffolded one are missing (`dw scaffold [-c <cat>] [--dry-run]`). Existing
-// files are never touched, so it is safe to re-run and needs no confirmation.
+// cmdScaffold backfills the files that workspaces created before dw scaffolded
+// them are missing — CLAUDE.md and the .claude/ tree — so an old workspace ends
+// up matching a freshly created one (`dw scaffold [-c <cat>] [--dry-run]`).
+// Existing files are never touched, so it is safe to re-run and needs no
+// confirmation.
 func cmdScaffold(cfg config.Config, stdout, stderr io.Writer, args []string) int {
 	fs := flag.NewFlagSet("scaffold", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -274,40 +276,59 @@ func cmdScaffold(cfg config.Config, stdout, stderr io.Writer, args []string) int
 	// Resolving templates is per-category, so cache it: a root with hundreds of
 	// workspaces would otherwise stat the templates dir once per project.
 	tmplFor := map[string]string{}
-	n := 0
+	nClaudeMD, nSettings := 0, 0
 	for _, p := range projects {
 		if *category != "" && p.Category != *category {
 			continue
 		}
 		claude := filepath.Join(p.Path, "CLAUDE.md")
 		if *dryRun {
-			if _, err := os.Stat(claude); err == nil {
-				continue
+			// Lstat, matching the O_EXCL the real write uses: a dangling symlink
+			// is not written through, so it must not be reported as pending.
+			if _, err := os.Lstat(claude); os.IsNotExist(err) {
+				fmt.Fprintln(stdout, claude)
+				nClaudeMD++
 			}
-			fmt.Fprintln(stdout, claude)
-			n++
-			continue
+		} else {
+			tmpl, ok := tmplFor[p.Category]
+			if !ok {
+				tmpl = workspace.ResolveClaudeTemplate(cfg.TemplatesDir, p.Category)
+				tmplFor[p.Category] = tmpl
+			}
+			wrote, err := workspace.EnsureClaudeMD(p, tmpl)
+			if err != nil {
+				fmt.Fprintln(stderr, "dw scaffold:", err)
+				return 1
+			}
+			if wrote {
+				fmt.Fprintln(stdout, claude)
+				nClaudeMD++
+			}
 		}
-		tmpl, ok := tmplFor[p.Category]
-		if !ok {
-			tmpl = workspace.ResolveClaudeTemplate(cfg.TemplatesDir, p.Category)
-			tmplFor[p.Category] = tmpl
+
+		// The .claude/ assets are fixed, so both paths ask the workspace package
+		// for the same plan instead of each deciding what belongs there.
+		var paths []string
+		var err error
+		if *dryRun {
+			paths, err = workspace.PendingClaudeSettings(p)
+		} else {
+			paths, err = workspace.EnsureClaudeSettings(p)
 		}
-		wrote, err := workspace.EnsureClaudeMD(p, tmpl)
 		if err != nil {
 			fmt.Fprintln(stderr, "dw scaffold:", err)
 			return 1
 		}
-		if wrote {
-			fmt.Fprintln(stdout, claude)
-			n++
+		for _, path := range paths {
+			fmt.Fprintln(stdout, path)
 		}
+		nSettings += len(paths)
 	}
 	verb := "wrote"
 	if *dryRun {
 		verb = "would write"
 	}
-	fmt.Fprintf(stdout, "%s %d CLAUDE.md\n", verb, n)
+	fmt.Fprintf(stdout, "%s %d CLAUDE.md, %d .claude/ file(s)\n", verb, nClaudeMD, nSettings)
 	return 0
 }
 

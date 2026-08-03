@@ -399,6 +399,96 @@ func TestCmdScaffoldUsesCategoryTemplate(t *testing.T) {
 	}
 }
 
+// stripClaudeSettings removes the .claude/ tree from every seeded workspace,
+// reproducing a root created before dw scaffolded one. Returns the workspace
+// paths it stripped.
+func stripClaudeSettings(t *testing.T, cfg config.Config) []string {
+	t.Helper()
+	projects, err := workspace.Scan(cfg.Root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stripped []string
+	for _, p := range projects {
+		if err := os.RemoveAll(filepath.Join(p.Path, ".claude")); err != nil {
+			t.Fatal(err)
+		}
+		stripped = append(stripped, p.Path)
+	}
+	return stripped
+}
+
+func TestCmdScaffoldWritesClaudeSettings(t *testing.T) {
+	cfg := seed(t)
+	stripped := stripClaudeSettings(t, cfg)
+	if len(stripped) != 2 {
+		t.Fatalf("expected 2 seeded workspaces, got %d", len(stripped))
+	}
+
+	var out, errb bytes.Buffer
+	if code := cmdScaffold(cfg, &out, &errb, nil); code != 0 {
+		t.Fatalf("exit = %d, stderr = %s", code, errb.String())
+	}
+	for _, dir := range stripped {
+		for _, rel := range []string{
+			".claude/settings.json",
+			".claude/rules/dw-workspace.md",
+			".claude/hooks/checkpoint.sh",
+		} {
+			path := filepath.Join(dir, rel)
+			if _, err := os.Stat(path); err != nil {
+				t.Errorf("%s not backfilled: %v", path, err)
+			}
+			if !strings.Contains(out.String(), path) {
+				t.Errorf("stdout %q missing %q", out.String(), path)
+			}
+		}
+		// Claude Code runs this one, so it has to come back executable.
+		fi, err := os.Stat(filepath.Join(dir, ".claude/hooks/checkpoint.sh"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if fi.Mode().Perm()&0o100 == 0 {
+			t.Errorf("checkpoint.sh mode = %v, want the owner execute bit set", fi.Mode().Perm())
+		}
+	}
+	if !strings.Contains(out.String(), "wrote 0 CLAUDE.md, 6 .claude/ file(s)") {
+		t.Errorf("stdout = %q, want a '0 CLAUDE.md, 6 .claude/' summary", out.String())
+	}
+
+	// re-running is a no-op
+	var out2, errb2 bytes.Buffer
+	if code := cmdScaffold(cfg, &out2, &errb2, nil); code != 0 {
+		t.Fatalf("second run exit = %d, stderr = %s", code, errb2.String())
+	}
+	if !strings.Contains(out2.String(), "wrote 0 CLAUDE.md, 0 .claude/ file(s)") {
+		t.Errorf("second run stdout = %q, want all zeroes", out2.String())
+	}
+}
+
+func TestCmdScaffoldDryRunClaudeSettings(t *testing.T) {
+	cfg := seed(t)
+	stripped := stripClaudeSettings(t, cfg)
+
+	var out, errb bytes.Buffer
+	if code := cmdScaffold(cfg, &out, &errb, []string{"--dry-run"}); code != 0 {
+		t.Fatalf("exit = %d, stderr = %s", code, errb.String())
+	}
+	for _, dir := range stripped {
+		claudeDir := filepath.Join(dir, ".claude")
+		if _, err := os.Stat(claudeDir); !os.IsNotExist(err) {
+			t.Errorf("--dry-run created %q", claudeDir)
+		}
+		if want := filepath.Join(claudeDir, "settings.json"); !strings.Contains(out.String(), want) {
+			t.Errorf("stdout %q missing %q", out.String(), want)
+		}
+	}
+	// the dry run predicts exactly what the real run writes
+	if !strings.Contains(out.String(), "would write 0 CLAUDE.md, 6 .claude/ file(s)") {
+		t.Errorf("stdout = %q, want a 'would write 0 CLAUDE.md, 6 .claude/' summary", out.String())
+	}
+}
+
 func TestCmdScaffoldUnexpectedArg(t *testing.T) {
 	cfg := seed(t)
 	var out, errb bytes.Buffer
