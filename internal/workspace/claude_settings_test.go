@@ -14,6 +14,7 @@ import (
 var claudeAssetDests = []string{
 	".claude/hooks/checkpoint.sh",
 	".claude/rules/dw-workspace.md",
+	".claude/rules/investigation.md",
 	".claude/settings.json",
 }
 

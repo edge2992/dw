@@ -10,9 +10,9 @@ import (
 func TestResolveTemplate(t *testing.T) {
 	tmplDir := filepath.Join(t.TempDir(), "templates")
 
-	// 3. nothing on disk -> built-in DefaultTemplate
-	if got := ResolveTemplate(tmplDir, "research"); got != DefaultTemplate {
-		t.Fatalf("empty dir should fall back to DefaultTemplate")
+	// 3. nothing on disk -> the built-in for that category
+	if got := ResolveTemplate(tmplDir, "research"); got != DefaultReadmeTemplate("research") {
+		t.Fatalf("empty dir should fall back to DefaultReadmeTemplate")
 	}
 
 	if err := os.MkdirAll(tmplDir, 0o755); err != nil {
@@ -90,6 +90,29 @@ func TestResolveTemplates(t *testing.T) {
 	got := ResolveTemplates(tmplDir, "research")
 	if got.README != "README" || got.ClaudeMD != "CLAUDE" {
 		t.Errorf("got %+v", got)
+	}
+}
+
+func TestDefaultReadmeTemplateVariesByCategory(t *testing.T) {
+	seen := map[string]string{}
+	for _, c := range DefaultCategories {
+		got := DefaultReadmeTemplate(c)
+		if prev, dup := seen[got]; dup {
+			t.Errorf("categories %q and %q share the same built-in README", prev, c)
+		}
+		// dw parses these fields back out, so every category has to carry them
+		if !strings.HasPrefix(got, "---\ntitle: {{title}}\n") {
+			t.Errorf("category %q lost the README frontmatter:\n%s", c, got)
+		}
+		seen[got] = c
+	}
+	// a category the user invented has no dedicated entry: generic fallback
+	generic := DefaultReadmeTemplate("woodworking")
+	if _, isPerCategory := seen[generic]; isPerCategory {
+		t.Errorf("unknown category got a per-category README:\n%s", generic)
+	}
+	if !strings.Contains(generic, genericReadmeBody) {
+		t.Errorf("unknown category should use genericReadmeBody, got:\n%s", generic)
 	}
 }
 

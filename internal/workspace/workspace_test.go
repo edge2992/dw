@@ -11,7 +11,7 @@ import (
 // testTemplates is what Create receives when a test doesn't care about template
 // contents — the built-ins, exactly as the real callers resolve them.
 func testTemplates(category string) Templates {
-	return Templates{README: DefaultTemplate, ClaudeMD: DefaultClaudeTemplate(category)}
+	return Templates{README: DefaultReadmeTemplate(category), ClaudeMD: DefaultClaudeTemplate(category)}
 }
 
 func TestSlugify(t *testing.T) {
@@ -47,7 +47,7 @@ func TestParseProject(t *testing.T) {
 }
 
 func TestRenderTemplate(t *testing.T) {
-	out := RenderTemplate(DefaultTemplate, "my-topic", "research", "2026-06-14")
+	out := RenderTemplate(DefaultReadmeTemplate("research"), "my-topic", "research", "2026-06-14")
 	for _, want := range []string{"title: my-topic", "category: research", "created: 2026-06-14"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("rendered template missing %q\n%s", want, out)

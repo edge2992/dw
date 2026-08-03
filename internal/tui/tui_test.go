@@ -343,7 +343,7 @@ func TestCreateUsesCategoryClaudeTemplate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(rb), "## Research Log") {
+	if !strings.Contains(string(rb), "## What would change this") {
 		t.Errorf("README should still use the built-in template, got %q", string(rb))
 	}
 }

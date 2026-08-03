@@ -19,11 +19,11 @@ $ dw
 
 ## Features
 
-- **Dated auto-layout** — every topic gets its own `<category>/<YYYY-MM-DD>-<topic>/` folder with a frontmatter README, created for you.
+- **Dated auto-layout** — every topic gets its own `<category>/<YYYY-MM-DD>-<topic>/` folder with a frontmatter README, created for you. The README's headings are shaped by the category: `research` leads with the answer and its confidence, `incident` with impact and an append-only timeline.
 - **Create on demand** — type the topic first, pick a category (or invent one) second. No `create` command, no naming ceremony.
 - **Fuzzy jump & resume** — fuzzy-match across names and titles, newest first; your last workspace is pinned to the top, and `dw -` returns to it with no UI.
 - **Frontmatter-aware** — shows `status` / `tags` / `created` from each README under the selection.
-- **Claude-ready** — every workspace also gets a `CLAUDE.md`, three lines of guidance tuned to its category (`research` and `incident` call for different habits). Override it per category like any template; `dw scaffold` backfills older workspaces.
+- **Claude-ready** — every workspace also gets a `CLAUDE.md` with a few lines of stance tuned to its category (`research` and `incident` call for different habits), plus an `investigation.md` project rule: how to scale effort from a quick lookup to a deep dive, carry competing hypotheses, source claims, and say what you could not verify. Override the `CLAUDE.md` per category like any template; `dw scaffold` backfills older workspaces.
 - **Picks up where you left off** — each workspace carries its own `.claude/` config: a `Stop` hook checkpoints the session into `.dw/last-session.md`, and a project rule tells the next session to read it. Scoped to the workspace, so your other repos are untouched.
 - **Scriptable primitives** — the TUI is sugar over plain commands: `dw new` creates, `dw list --json` streams, so you can wire your own flow (`dw list --json | fzf`).
 - **Unicode-safe slugs** — Japanese and other scripts survive slugification (`機械学習 調査` → `機械学習-調査`).
@@ -131,11 +131,12 @@ what makes the `dw()` wrapper and pipelines like `dw list | fzf` work.
 
 ```text
 <root>/<category>/<YYYY-MM-DD>-<topic-slug>/
-  README.md                     # frontmatter-indexed entry point
+  README.md                     # frontmatter-indexed entry point, headings per category
   CLAUDE.md                     # how to work in this topic, per category
   .claude/
     settings.json               # enables the Stop hook, in this workspace only
     rules/dw-workspace.md       # tells Claude to read the checkpoint on startup
+    rules/investigation.md      # how to investigate: effort tiers, evidence, stopping
     hooks/checkpoint.sh         # writes the checkpoint at the end of each turn
   .dw/last-session.md           # the checkpoint (written by the hook, not by dw)
 ```

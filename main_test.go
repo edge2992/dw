@@ -14,7 +14,7 @@ import (
 )
 
 // testCfg builds a Config rooted at root, with a templates dir that does not
-// exist (so ResolveTemplate falls back to the built-in DefaultTemplate) and the
+// exist (so ResolveTemplate falls back to the built-in README template) and the
 // default categories. It mirrors what config.Load would resolve, minus the file.
 func testCfg(root string) config.Config {
 	return config.Config{
@@ -27,7 +27,7 @@ func testCfg(root string) config.Config {
 // builtinTemplates is what the real callers resolve when no templates dir exists.
 func builtinTemplates(category string) workspace.Templates {
 	return workspace.Templates{
-		README:   workspace.DefaultTemplate,
+		README:   workspace.DefaultReadmeTemplate(category),
 		ClaudeMD: workspace.DefaultClaudeTemplate(category),
 	}
 }
@@ -433,6 +433,7 @@ func TestCmdScaffoldWritesClaudeSettings(t *testing.T) {
 		for _, rel := range []string{
 			".claude/settings.json",
 			".claude/rules/dw-workspace.md",
+			".claude/rules/investigation.md",
 			".claude/hooks/checkpoint.sh",
 		} {
 			path := filepath.Join(dir, rel)
@@ -452,8 +453,8 @@ func TestCmdScaffoldWritesClaudeSettings(t *testing.T) {
 			t.Errorf("checkpoint.sh mode = %v, want the owner execute bit set", fi.Mode().Perm())
 		}
 	}
-	if !strings.Contains(out.String(), "wrote 0 CLAUDE.md, 6 .claude/ file(s)") {
-		t.Errorf("stdout = %q, want a '0 CLAUDE.md, 6 .claude/' summary", out.String())
+	if !strings.Contains(out.String(), "wrote 0 CLAUDE.md, 8 .claude/ file(s)") {
+		t.Errorf("stdout = %q, want a '0 CLAUDE.md, 8 .claude/' summary", out.String())
 	}
 
 	// re-running is a no-op
@@ -484,8 +485,8 @@ func TestCmdScaffoldDryRunClaudeSettings(t *testing.T) {
 		}
 	}
 	// the dry run predicts exactly what the real run writes
-	if !strings.Contains(out.String(), "would write 0 CLAUDE.md, 6 .claude/ file(s)") {
-		t.Errorf("stdout = %q, want a 'would write 0 CLAUDE.md, 6 .claude/' summary", out.String())
+	if !strings.Contains(out.String(), "would write 0 CLAUDE.md, 8 .claude/ file(s)") {
+		t.Errorf("stdout = %q, want a 'would write 0 CLAUDE.md, 8 .claude/' summary", out.String())
 	}
 }
 
