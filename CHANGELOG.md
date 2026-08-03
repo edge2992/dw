@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.7.0](https://github.com/edge2992/dw/compare/v0.6.0...v0.7.0) (2026-08-03)
+
+
+### Features
+
+* carry session context across workspace visits ([5262e35](https://github.com/edge2992/dw/commit/5262e3593eaa3b7b75dfb4ffd1f92bb7f5ae2009))
+* carry session context across workspace visits ([2dc5b39](https://github.com/edge2992/dw/commit/2dc5b3934c54538b7bde6a182672941e5f5af8cb))
+* scaffold a per-category CLAUDE.md ([4b22ec6](https://github.com/edge2992/dw/commit/4b22ec6fe097e06037e9f4eeda879f78a6e51eb2))
+* scaffold a per-category CLAUDE.md ([1dde7b3](https://github.com/edge2992/dw/commit/1dde7b3ff19f670c5ee9cb83c533e7d654a3a2a7))
+
+
+### Bug Fixes
+
+* create scaffold files atomically ([41f1313](https://github.com/edge2992/dw/commit/41f13139e328ee60b3bb84db3d9cb659012e7ae1))
+
 ## [0.6.0](https://github.com/edge2992/dw/compare/v0.5.0...v0.6.0) (2026-06-27)
 
 
