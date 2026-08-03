@@ -101,33 +101,27 @@ func TestCheckpointHookOverwritesPreviousRun(t *testing.T) {
 
 func TestCheckpointHookWithoutJqIsSilentNoop(t *testing.T) {
 	dir := newCheckpointWorkspace(t)
-	jq, err := exec.LookPath("jq")
+	// A PATH holding nothing but bash, rather than PATH minus jq's directory:
+	// subtracting that directory takes bash down with it wherever the two live
+	// side by side, as they do on the CI runner (/usr/bin). The hook checks for
+	// jq before it reaches for anything else, so bash alone is enough to run it.
+	bash, err := exec.LookPath("bash")
 	if err != nil {
-		t.Skip("jq not installed")
+		t.Skip("bash not installed")
 	}
-	// Drop only the directories that actually hold jq, so the test works
-	// wherever jq happens to be installed.
-	jqDir, err := filepath.EvalSymlinks(filepath.Dir(jq))
-	if err != nil {
+	binDir := t.TempDir()
+	if err := os.Symlink(bash, filepath.Join(binDir, "bash")); err != nil {
 		t.Fatal(err)
 	}
-	var kept []string
-	for _, d := range filepath.SplitList(os.Getenv("PATH")) {
-		if resolved, err := filepath.EvalSymlinks(d); err == nil && resolved == jqDir {
-			continue
-		}
-		kept = append(kept, d)
-	}
-	path := strings.Join(kept, string(filepath.ListSeparator))
-	t.Setenv("PATH", path)
+	t.Setenv("PATH", binDir)
 	if _, err := exec.LookPath("jq"); err == nil {
-		t.Skip("could not build a jq-free PATH")
+		t.Fatal("jq is still reachable on a PATH that should only hold bash")
 	}
 
 	// Must still exit 0 silently: a machine without jq gets no checkpoint, not
 	// a session that refuses to stop.
 	runCheckpoint(t, dir, `{"session_id":"abc","last_assistant_message":"hi"}`,
-		"PATH="+path, "CLAUDE_PROJECT_DIR="+dir)
+		"PATH="+binDir, "CLAUDE_PROJECT_DIR="+dir)
 	if _, err := os.Stat(filepath.Join(dir, ".dw")); !os.IsNotExist(err) {
 		t.Errorf(".dw was created without jq: %v", err)
 	}
