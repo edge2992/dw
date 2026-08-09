@@ -70,20 +70,15 @@ Both forms print the same tab-separated contract to stdout:
 <absolute path>\t<marker + title>\t<first open question>\t<directory name>
 ```
 
-- Column 1: absolute path (hidden by the fzf wrapper, useful for scripting: `cut -f1`).
-- Column 2: `* ` prefix for the pinned/last-visited workspace, `  ` otherwise, then the title (`STATE.md`'s first `# ` heading, or the topic slug if there's no `STATE.md` yet).
-- Column 3: the first line under `## 未決の問い` (open questions) in `STATE.md` — empty if there isn't one.
-- Column 4: the directory name, e.g. `2026-08-08-datadog-cost`. It duplicates the basename of column 1 on purpose: `fzf` can only search fields it displays, and the wrapper hides column 1. Without this column, rewriting a `STATE.md` title — the expected workflow — would make that workspace unfindable by its slug, and the picker would offer to create a duplicate instead. It also lets you type `2026-08` to narrow by month.
-
 Everything goes to **stdout**; diagnostics go to stderr. `dw` never asks for confirmation and never launches `claude` itself — it only ever prints paths.
 
-| Command | Description |
-|---|---|
-| `dw` | Open the picker over every workspace, most recently visited pinned first. |
-| `dw <topic>` | Open the picker with `<topic>` pre-typed. Without shell integration, resolves `<topic>`: exact match, else partial match(es), else create it. |
-| `dw init <zsh\|bash>` | Print the shell function that wires `dw` into `fzf` and `cd`. |
-| `dw version` | Print the version. |
-| `dw help` | Show usage, including the resolved `DW_ROOT`. |
+| Command               | Description                                                                                                                                   |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `dw`                  | Open the picker over every workspace, most recently visited pinned first.                                                                     |
+| `dw <topic>`          | Open the picker with `<topic>` pre-typed. Without shell integration, resolves `<topic>`: exact match, else partial match(es), else create it. |
+| `dw init <zsh\|bash>` | Print the shell function that wires `dw` into `fzf` and `cd`.                                                                                 |
+| `dw version`          | Print the version.                                                                                                                            |
+| `dw help`             | Show usage, including the resolved `DW_ROOT`.                                                                                                 |
 
 Run `dw` straight from a prompt without `eval "$(dw init zsh)"` and you'll get raw TSV plus a note on stderr telling you so — and on a fresh install with no workspaces, a short getting-started block instead of the silence earlier versions printed.
 
@@ -101,7 +96,7 @@ Four layers, described fully in [docs/concepts.md](docs/concepts.md): **Sources*
 
 ### A note on `CLAUDE.md` and long sessions
 
-Claude Code loads `CLAUDE.md` files by walking up the directory tree from the working directory, so running `claude` inside `<root>/<topic>/` loads `<root>/CLAUDE.md` in full at launch. What isn't documented is whether that ancestor file is *re-injected* after `/compact` the way the project-root `CLAUDE.md` is — so on a very long session, the convention may fade before `STATE.md`'s content does. If you notice Claude drifting from the convention late in a long session, that's the likely cause; re-reading `<root>/CLAUDE.md` explicitly is the workaround.
+Claude Code loads `CLAUDE.md` files by walking up the directory tree from the working directory, so running `claude` inside `<root>/<topic>/` loads `<root>/CLAUDE.md` in full at launch. What isn't documented is whether that ancestor file is _re-injected_ after `/compact` the way the project-root `CLAUDE.md` is — so on a very long session, the convention may fade before `STATE.md`'s content does. If you notice Claude drifting from the convention late in a long session, that's the likely cause; re-reading `<root>/CLAUDE.md` explicitly is the workaround.
 
 ## Configuration
 
@@ -112,41 +107,6 @@ export DW_ROOT=~/discussions
 ```
 
 Every path `dw` prints is absolute — `Root()` normalizes `DW_ROOT` against the current directory if it isn't already absolute. Still, set it to something that's absolute up front (`~/discussions`, which your shell expands before `dw` ever sees it, or `$HOME/discussions`), not a bare relative path like `discussions`: since the wrapper `cd`s you into a resolved workspace, running `dw` again from inside one would re-resolve a relative `DW_ROOT` under that workspace instead of your intended root.
-
-## Contributing
-
-```sh
-make fmt    # gofumpt + goimports (golangci-lint fmt)
-make lint   # golangci-lint run
-make test   # go test -race ./...
-make        # all of the above
-```
-
-Building from source needs the Go version pinned in `go.mod` (currently 1.26). The binary itself has no runtime dependencies — no cgo, no external files (the shell wrapper is embedded as a Go string, see below) — so cross-compilation just works, which is how [Releases](https://github.com/edge2992/dw/releases/latest) ships linux/macOS/windows × amd64/arm64 from one `.goreleaser.yaml` config.
-
-Two portability notes if you're changing shell-facing behavior:
-
-- The `dw init` wrapper targets POSIX-compatible `zsh`/`bash` only (`dw init fish` or anything else is a usage error); Windows users get a binary but no wrapper.
-- The "last visited" cache path comes from `os.UserCacheDir()`, which differs by OS (`~/.cache/dw/last` on Linux, `~/Library/Caches/dw/last` on macOS) — never hardcode it.
-
-Other project mechanics:
-
-- **Lint/Format**: golangci-lint v2 (config `.golangci.yml`, standard set + misspell/revive; formatters gofumpt/goimports).
-- **Hooks**: pre-commit framework (`.pre-commit-config.yaml`). A global pre-commit hook delegates here after gitleaks, so `pre-commit install` is not required. Setup: `uv tool install pre-commit`, `brew install golangci-lint`.
-- **CI**: GitHub Actions (`.github/workflows/ci.yml`) runs build / test -race / golangci-lint.
-- **Release**: fully automated. [Release Please](https://github.com/googleapis/release-please) parses [Conventional Commits](https://www.conventionalcommits.org/) on every push to `main` to maintain a release PR; merging it tags the release, and [GoReleaser](https://goreleaser.com/) attaches the binaries. `feat` bumps the minor, `fix` the patch, `feat!`/`fix!` (or a `BREAKING CHANGE:` footer) bumps the major — so a commit's type is also a release decision, not just a label.
-
-There's no separate `CONTRIBUTING.md`; open a PR or issue against this repo.
-
-## Reading the source
-
-`dw` is small on purpose (see [Why](#why)) — the whole implementation is `main.go` plus `internal/workspace/`. A few things that aren't obvious from the file names alone:
-
-- **`internal/workspace/`** holds all of the logic: `workspace.go` (`Scan`/`Resolve`/`Create`, the topic-resolution algorithm), `state.go` (`STATE.md` templating and parsing), `convention.go` (writes the root `CLAUDE.md` once), and `last.go` (the "last visited" cache). `main.go` is just argv dispatch and output formatting on top of that package.
-- **Two files are both named `CLAUDE.md` and mean different things.** `/CLAUDE.md` (repo root) is this repository's *own* development guidance — instructions for working on dw's Go source. `internal/workspace/assets/CLAUDE.md` is a template, `//go:embed`ded into the binary, that `dw` writes once into every `<DW_ROOT>/CLAUDE.md` it creates (the Convention layer described above). They're unrelated; don't edit one expecting it to affect the other.
-- **`main.go`'s `shellInit` constant** *is* the `dw init zsh`/`dw init bash` output — the wrapper script lives inline as a Go string rather than a separate `.sh` file, which is also why the binary has no runtime file dependencies (see Contributing). It defines two functions: `dw()` decides whether a picker is possible at all, and `__dw_pick` runs it. They are split so `shellinit_test.go` can drive the picker under both shells with a stub `fzf`, without needing a terminal — the only coverage the wrapper has, since a Go string constant is invisible to every other check.
-- **`.golangci.yml`, `.pre-commit-config.yaml`, `.goreleaser.yaml`, `release-please-config.json`** are tooling configuration, not part of the `dw` package — see Contributing for what each one does.
-- **`docs/concepts.md`** is the design document this tool implements; read it if `STATE.md`'s shape (前提 / 却下した案 / 未決の問い) or the four-layer split needs more context than this README gives.
 
 ## License
 
