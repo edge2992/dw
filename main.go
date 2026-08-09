@@ -33,14 +33,36 @@ Usage:
   dw help             Show this help
 
 Output (stdout, tab-separated, one row per workspace):
-  <absolute path>	<marker + title>	<first open question>
+  <absolute path>	<marker + title>	<first open question>	<directory name>
 The marker is "* " for the most recently visited workspace, "  " otherwise.
 When <topic> matches more than one workspace, every match is printed — dw
 never picks one for you; the shell wrapper hands the rows to fzf.
 
+With shell integration enabled, both forms open the fzf picker instead of
+printing: bare dw lists everything, dw <topic> opens with <topic> pre-typed,
+and whatever you type that matches nothing becomes a new workspace.
+
 Enable shell integration once with:  eval "$(dw init zsh)"   (or bash)
 
 Root: %s
+`
+
+// emptyRootHint replaces the empty listing a first run would otherwise print.
+// It is only shown when a human is looking (see hintFirstRun) — with the shell
+// wrapper installed, the empty fzf picker says the same thing interactively.
+const emptyRootHint = `dw: no workspaces yet in %s
+
+  dw <topic>   create your first workspace (e.g. dw datadog-cost)
+  dw help      full usage
+
+Enable the picker once with:  eval "$(dw init zsh)"   (or bash)
+`
+
+// integrationHint fires when someone runs dw straight from a prompt and gets
+// raw TSV back. That output is meant for the shell wrapper, not for reading,
+// so without this the tool looks broken rather than unconfigured.
+const integrationHint = `dw: shell integration is not enabled, so these rows are raw TSV.
+    Run  eval "$(dw init zsh)"  (or bash) to get the fzf picker and cd.
 `
 
 func main() { os.Exit(run(os.Args, os.Stdout, os.Stderr)) }
@@ -70,6 +92,36 @@ func run(argv []string, stdout, stderr io.Writer) int {
 	return cmdResolve(root, stdout, stderr, topic)
 }
 
+// isTerminal reports whether w is a character device. It is how dw tells "a
+// human is reading this" from "the shell wrapper or a script is capturing it":
+// the wrapper always reads dw through $(...), so a terminal on stdout means
+// shell integration is not in play. Declared as a variable so tests can
+// pretend either way.
+var isTerminal = func(w io.Writer) bool {
+	f, ok := w.(*os.File)
+	if !ok {
+		return false
+	}
+	fi, err := f.Stat()
+	return err == nil && fi.Mode()&os.ModeCharDevice != 0
+}
+
+// hintFirstRun writes guidance to stderr for the two ways dw's stdout can be
+// unhelpful on its own: nothing to list, or TSV nobody asked to read. Both are
+// only worth saying when stdout is a terminal — piped output belongs to the
+// wrapper or a script, and rows is 0 there simply means "no workspaces".
+// stdout itself is left alone either way, so the TSV contract still holds.
+func hintFirstRun(stdout, stderr io.Writer, root string, rows int) {
+	if !isTerminal(stdout) {
+		return
+	}
+	if rows == 0 {
+		fmt.Fprintf(stderr, emptyRootHint, root)
+		return
+	}
+	fmt.Fprint(stderr, integrationHint)
+}
+
 // cmdList prints every workspace under root as TSV (`dw` with no arguments).
 // It never touches the "last visited" pin — only resolving a single
 // workspace does that (see cmdResolve).
@@ -81,6 +133,7 @@ func cmdList(root string, stdout, stderr io.Writer) int {
 	}
 	last := workspace.LastPath()
 	printRows(stdout, workspace.PinLast(projects, last), last)
+	hintFirstRun(stdout, stderr, root, len(projects))
 	return 0
 }
 
@@ -113,6 +166,9 @@ func cmdResolve(root string, stdout, stderr io.Writer, arg string) int {
 		}
 	}
 	printRows(stdout, matches, last)
+	// Resolve always yields at least one match (it creates when nothing
+	// matches), so this only ever prints the shell-integration hint.
+	hintFirstRun(stdout, stderr, root, len(matches))
 	return 0
 }
 
@@ -123,32 +179,73 @@ func printRows(w io.Writer, projects []workspace.Project, last string) {
 	}
 }
 
-// shellInit is the function dw prints from `dw init`. It captures the TSV dw
-// emits, hands multi-row output to fzf when available (falling back to a
-// plain printed list otherwise), re-resolves the chosen absolute path through
-// `command dw` (so that becomes the new "last visited" workspace — see
-// internal/workspace.Resolve), and cd's into it. zsh and bash share this
-// POSIX-compatible body.
-const shellInit = `dw() {
+// shellInit is what dw prints from `dw init`. dw is a child process, so it can
+// neither cd nor drive fzf; both belong here. Interactively the picker is the
+// whole interface — it always opens, however many workspaces exist, because a
+// list of one is still a list you might not want to enter, and a list of none
+// is exactly when you want to type a name. Anything typed that matches nothing
+// is handed back to `command dw`, which resolves it or creates it.
+//
+// __dw_pick is split out of dw() so tests can drive the picker with a stub fzf
+// without allocating a terminal: dw() owns the `[ -t 0 ]` gate, __dw_pick owns
+// the loop. zsh and bash share this body.
+const shellInit = `__dw_pick() {
+  local rows out query sel st
+  rows="$(command dw)" || return
+  query="$*"
+  while :; do
+    # printf '%s' rather than '%s\n': an empty list has to reach fzf as zero
+    # items, not as one blank line.
+    out="$(printf '%s' "$rows" | fzf --print-query --query="$query" \
+             --delimiter=$'\t' --with-nth=2.. --prompt='dw> ' \
+             --header='enter: open · type a new topic + enter: create' \
+             --preview='head -40 {1}/STATE.md' --preview-window=right,60%)"
+    st=$?
+    # --print-query puts the query on the first line, whatever the exit status.
+    query="${out%%$'\n'*}"
+    if [ "$st" -eq 0 ]; then sel="${out#*$'\n'}"; break; fi
+    # 1 means nothing matched; anything else (130) is ESC or ctrl-c.
+    [ "$st" -eq 1 ] && [ -n "$query" ] || return 1
+    # fzf gave up, but dw matches on the slug and may still find it — and only
+    # creates a workspace when that misses too.
+    rows="$(command dw "$query")" || return
+    case "$rows" in
+      # Several slug matches: pick among them, with the query cleared. Keeping
+      # it would re-open fzf on a query fzf already failed to match, forever.
+      *$'\n'*) query=''; continue ;;
+      *) sel="$rows"; break ;;
+    esac
+  done
+  printf '%s\n' "$sel"
+}
+
+dw() {
   case "${1:-}" in
     init|help|version|--help|-h|--version|-v)
-      command dw "$@" ;;
-    *)
-      local rows
-      rows="$(command dw "$@")" || return
-      [ -n "$rows" ] || return 0
-      if [ "$(printf '%s\n' "$rows" | wc -l)" -gt 1 ]; then
-        if command -v fzf >/dev/null 2>&1; then
-          rows="$(printf '%s\n' "$rows" | fzf --delimiter=$'\t' --with-nth=2.. \
-                    --preview='head -40 {1}/STATE.md' --preview-window=right,60%)" || return
-          rows="$(command dw "${rows%%$'\t'*}")" || return
-        else
-          printf '%s\n' "$rows" | cut -f2-
-          return 0
-        fi
-      fi
-      cd "${rows%%$'\t'*}" ;;
+      command dw "$@"
+      return ;;
   esac
+
+  local sel
+  if [ -t 0 ] && command -v fzf >/dev/null 2>&1; then
+    sel="$(__dw_pick "$@")" || return
+  else
+    # No picker: resolve the arguments the way dw always has, and stop short of
+    # cd'ing when that leaves more than one candidate.
+    sel="$(command dw "$@")" || return
+    if [ -z "$sel" ]; then
+      printf 'dw: no workspaces yet - create one with: dw <topic>\n' >&2
+      return 0
+    fi
+    case "$sel" in
+      *$'\n'*) printf '%s\n' "$sel" | cut -f2-; return 0 ;;
+    esac
+  fi
+  [ -n "$sel" ] || return 0
+  # Re-resolve the chosen path so it becomes the new "last visited" workspace
+  # (SaveLast only fires for a single match — see internal/workspace.Resolve).
+  sel="$(command dw "${sel%%$'\t'*}")" || return
+  cd "${sel%%$'\t'*}"
 }
 `
 

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -36,6 +37,60 @@ func TestRun_ListEmptyRoot(t *testing.T) {
 	if stdout != "" {
 		t.Errorf("stdout = %q, want empty", stdout)
 	}
+	if stderr != "" {
+		t.Errorf("stderr = %q, want empty when stdout is captured rather than read by a human", stderr)
+	}
+}
+
+// pretendTerminal makes isTerminal report true for the rest of the test, so
+// the hints that only fire for a human at a prompt can be exercised without
+// allocating one.
+func pretendTerminal(t *testing.T) {
+	t.Helper()
+	saved := isTerminal
+	isTerminal = func(io.Writer) bool { return true }
+	t.Cleanup(func() { isTerminal = saved })
+}
+
+// TestRun_EmptyRootHintsInsteadOfSayingNothing is the first-run case: bare dw
+// with no workspaces used to print nothing at all and exit 0, which reads as a
+// broken install.
+func TestRun_EmptyRootHintsInsteadOfSayingNothing(t *testing.T) {
+	root := setup(t)
+	pretendTerminal(t)
+
+	stdout, stderr, code := runCmd(t)
+	if code != 0 {
+		t.Fatalf("code = %d, want 0", code)
+	}
+	if stdout != "" {
+		t.Errorf("stdout = %q, want the TSV contract left empty", stdout)
+	}
+	if !strings.Contains(stderr, root) {
+		t.Errorf("stderr = %q, want it to name the root %q", stderr, root)
+	}
+	if !strings.Contains(stderr, "dw <topic>") {
+		t.Errorf("stderr = %q, want it to show how to create the first workspace", stderr)
+	}
+}
+
+// TestRun_RawTSVHintsAtShellIntegration covers the other way dw's stdout is
+// unhelpful on its own: rows exist, but nobody wired up the wrapper, so the
+// user is staring at tab-separated paths.
+func TestRun_RawTSVHintsAtShellIntegration(t *testing.T) {
+	setup(t)
+	if _, _, code := runCmd(t, "alpha"); code != 0 {
+		t.Fatal("setup creation failed")
+	}
+	pretendTerminal(t)
+
+	stdout, stderr, _ := runCmd(t)
+	if !strings.Contains(stdout, "alpha") {
+		t.Fatalf("stdout = %q, want the workspace row", stdout)
+	}
+	if !strings.Contains(stderr, "dw init zsh") {
+		t.Errorf("stderr = %q, want the shell-integration hint", stderr)
+	}
 }
 
 func TestRun_ResolveCreatesAndLists(t *testing.T) {
@@ -50,14 +105,17 @@ func TestRun_ResolveCreatesAndLists(t *testing.T) {
 		t.Fatalf("stdout = %q, want exactly one row", stdout)
 	}
 	cols := strings.Split(lines[0], "\t")
-	if len(cols) != 3 {
-		t.Fatalf("row %q, want 3 tab-separated columns", lines[0])
+	if len(cols) != 4 {
+		t.Fatalf("row %q, want 4 tab-separated columns", lines[0])
 	}
 	if !strings.HasPrefix(cols[0], root) {
 		t.Errorf("path column %q is not under root %q", cols[0], root)
 	}
 	if cols[1] != "* Datadog Cost" {
 		t.Errorf("marker+title column = %q, want %q (freshly resolved workspace becomes \"last\")", cols[1], "* Datadog Cost")
+	}
+	if cols[3] != filepath.Base(cols[0]) {
+		t.Errorf("name column = %q, want the directory name %q", cols[3], filepath.Base(cols[0]))
 	}
 
 	// A second bare `dw` should now list exactly that one workspace, pinned.

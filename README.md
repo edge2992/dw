@@ -21,7 +21,8 @@ A conversation ends and the log is gone the next time you start one — Claude h
 - **State, not conversation log** — a new workspace gets one file, `STATE.md`. That's what carries forward across sessions.
 - **A single Convention layer** — the workspace root gets exactly one `CLAUDE.md`, written once and never touched again by `dw`. It tells Claude how to treat `STATE.md`, not what any particular topic is about.
 - **Ambiguity goes to `fzf`, not to `dw`** — when a topic matches more than one workspace, `dw` prints every match; it never guesses which one you meant.
-- **Resume by default** — your last-visited workspace is pinned to the top of the listing, so `dw` with no arguments and `enter` gets you back to where you left off.
+- **One command, no modes** — `dw` always opens the picker, however many workspaces you have. Filter to find one, or keep typing past the last match and `enter` creates that topic. There is nothing else to learn.
+- **Resume by default** — your last-visited workspace is pinned to the top of the picker, so `dw` and `enter` gets you back to where you left off.
 - **Zero config, zero dependencies** — one environment variable (`DW_ROOT`), no YAML, and the Go standard library only.
 
 ## Install
@@ -47,38 +48,44 @@ eval "$(dw init zsh)"   # or: dw init bash
 
 That wrapper:
 
-1. Runs `command dw "$@"` and captures the TSV rows.
-2. If there's more than one row, hands them to `fzf` (`--with-nth=2..` hides the path column, the preview shows `STATE.md`) — or, without `fzf` on `PATH`, just prints the rows and stops.
-3. Re-resolves the chosen absolute path through `command dw` (so it becomes the new "last visited" workspace) and `cd`'s into it.
+1. Runs `command dw` and captures the TSV rows.
+2. Hands them to `fzf` — always, not only when there's more than one. `--with-nth=2..` hides the path column, the preview shows `STATE.md`, and `dw <topic>` arrives as `--query=<topic>` so the picker opens already filtered.
+3. If you `enter` on a row, re-resolves its absolute path through `command dw` (so it becomes the new "last visited" workspace) and `cd`'s into it.
+4. If nothing matched what you typed, hands the query to `command dw` instead — which finds it by slug or, failing that, creates it. Either way you end up in the workspace.
 
-`fzf` is optional but the point of the tool without it: install it (`brew install fzf`) to get the picker experience; without it `dw` still works from the command line, just without disambiguation.
+So the picker never dead-ends: `enter` on a match opens it, `enter` on no match creates it, `esc` does nothing.
+
+`fzf` is optional but the point of the tool without it: install it (`brew install fzf`) to get the picker experience. Without it — or outside a terminal — the wrapper falls back to resolving your arguments directly and printing anything ambiguous.
 
 ### Quickstart
 
 ```sh
-dw datadog-cost        # exact/partial match jumps in; no match creates it
-dw                      # list every workspace, most recently visited pinned first
+dw                      # open the picker: filter, or type a new topic and press enter
+dw datadog-cost         # same picker, pre-filtered to "datadog-cost"
 ```
 
 Both forms print the same tab-separated contract to stdout:
 
 ```
-<absolute path>\t<marker + title>\t<first open question>
+<absolute path>\t<marker + title>\t<first open question>\t<directory name>
 ```
 
 - Column 1: absolute path (hidden by the fzf wrapper, useful for scripting: `cut -f1`).
 - Column 2: `* ` prefix for the pinned/last-visited workspace, `  ` otherwise, then the title (`STATE.md`'s first `# ` heading, or the topic slug if there's no `STATE.md` yet).
 - Column 3: the first line under `## 未決の問い` (open questions) in `STATE.md` — empty if there isn't one.
+- Column 4: the directory name, e.g. `2026-08-08-datadog-cost`. It duplicates the basename of column 1 on purpose: `fzf` can only search fields it displays, and the wrapper hides column 1. Without this column, rewriting a `STATE.md` title — the expected workflow — would make that workspace unfindable by its slug, and the picker would offer to create a duplicate instead. It also lets you type `2026-08` to narrow by month.
 
 Everything goes to **stdout**; diagnostics go to stderr. `dw` never asks for confirmation and never launches `claude` itself — it only ever prints paths.
 
 | Command | Description |
 |---|---|
-| `dw` | List every workspace as TSV, most recently visited pinned first. |
-| `dw <topic>` | Resolve `<topic>`: exact match, else partial match(es), else create it. |
+| `dw` | Open the picker over every workspace, most recently visited pinned first. |
+| `dw <topic>` | Open the picker with `<topic>` pre-typed. Without shell integration, resolves `<topic>`: exact match, else partial match(es), else create it. |
 | `dw init <zsh\|bash>` | Print the shell function that wires `dw` into `fzf` and `cd`. |
 | `dw version` | Print the version. |
 | `dw help` | Show usage, including the resolved `DW_ROOT`. |
+
+Run `dw` straight from a prompt without `eval "$(dw init zsh)"` and you'll get raw TSV plus a note on stderr telling you so — and on a fresh install with no workspaces, a short getting-started block instead of the silence earlier versions printed.
 
 ### What `dw` creates
 
@@ -137,7 +144,7 @@ There's no separate `CONTRIBUTING.md`; open a PR or issue against this repo.
 
 - **`internal/workspace/`** holds all of the logic: `workspace.go` (`Scan`/`Resolve`/`Create`, the topic-resolution algorithm), `state.go` (`STATE.md` templating and parsing), `convention.go` (writes the root `CLAUDE.md` once), and `last.go` (the "last visited" cache). `main.go` is just argv dispatch and output formatting on top of that package.
 - **Two files are both named `CLAUDE.md` and mean different things.** `/CLAUDE.md` (repo root) is this repository's *own* development guidance — instructions for working on dw's Go source. `internal/workspace/assets/CLAUDE.md` is a template, `//go:embed`ded into the binary, that `dw` writes once into every `<DW_ROOT>/CLAUDE.md` it creates (the Convention layer described above). They're unrelated; don't edit one expecting it to affect the other.
-- **`main.go`'s `shellInit` constant** *is* the `dw init zsh`/`dw init bash` output — the wrapper script lives inline as a Go string rather than a separate `.sh` file, which is also why the binary has no runtime file dependencies (see Contributing).
+- **`main.go`'s `shellInit` constant** *is* the `dw init zsh`/`dw init bash` output — the wrapper script lives inline as a Go string rather than a separate `.sh` file, which is also why the binary has no runtime file dependencies (see Contributing). It defines two functions: `dw()` decides whether a picker is possible at all, and `__dw_pick` runs it. They are split so `shellinit_test.go` can drive the picker under both shells with a stub `fzf`, without needing a terminal — the only coverage the wrapper has, since a Go string constant is invisible to every other check.
 - **`.golangci.yml`, `.pre-commit-config.yaml`, `.goreleaser.yaml`, `release-please-config.json`** are tooling configuration, not part of the `dw` package — see Contributing for what each one does.
 - **`docs/concepts.md`** is the design document this tool implements; read it if `STATE.md`'s shape (前提 / 却下した案 / 未決の問い) or the four-layer split needs more context than this README gives.
 
