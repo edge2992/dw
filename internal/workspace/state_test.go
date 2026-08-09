@@ -1,8 +1,10 @@
 package workspace
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -90,6 +92,34 @@ func TestReadState(t *testing.T) {
 				t.Errorf("unresolved = %q, want %q", got.unresolved, c.wantUnresolved)
 			}
 		})
+	}
+}
+
+// TestReadState_LongDocument guards against reintroducing a fixed line cap:
+// a well-used STATE.md accumulates dated 前提/却下した案 entries over a
+// topic's life, so "## 未決の問い" (and its first entry) must still be found
+// even after the earlier sections have grown past what a small prefix scan
+// would cover.
+func TestReadState_LongDocument(t *testing.T) {
+	dir := t.TempDir()
+	var b strings.Builder
+	b.WriteString("# Long Topic\n\n## 前提\n\n")
+	for i := 0; i < 100; i++ {
+		fmt.Fprintf(&b, "- 事実(2026-08-%02d): filler premise line %d\n", (i%28)+1, i)
+	}
+	b.WriteString("\n## 却下した案\n\n")
+	for i := 0; i < 100; i++ {
+		fmt.Fprintf(&b, "- 案%d は採らない。理由は Y%d。\n", i, i)
+	}
+	b.WriteString("\n" + unresolvedHeading + "\n\nFlex Logs pricing is still TBD\n")
+	writeState(t, dir, b.String())
+
+	got := readState(dir)
+	if got.title != "Long Topic" {
+		t.Errorf("title = %q, want %q", got.title, "Long Topic")
+	}
+	if got.unresolved != "Flex Logs pricing is still TBD" {
+		t.Errorf("unresolved = %q, want %q (the heading must not scroll out of a fixed scan window)", got.unresolved, "Flex Logs pricing is still TBD")
 	}
 }
 

@@ -9,6 +9,41 @@ import (
 	"time"
 )
 
+func TestRoot_AlwaysAbsolute(t *testing.T) {
+	t.Run("relative DW_ROOT is made absolute", func(t *testing.T) {
+		wd, err := os.Getwd()
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("DW_ROOT", "some-relative-dir")
+		want := filepath.Join(wd, "some-relative-dir")
+		if got := Root(); got != want {
+			t.Errorf("Root() = %q, want %q", got, want)
+		}
+		if !filepath.IsAbs(Root()) {
+			t.Errorf("Root() = %q, want an absolute path", Root())
+		}
+	})
+
+	t.Run("absolute DW_ROOT is left as-is", func(t *testing.T) {
+		abs := filepath.Join(t.TempDir(), "root")
+		t.Setenv("DW_ROOT", abs)
+		if got := Root(); got != abs {
+			t.Errorf("Root() = %q, want %q", got, abs)
+		}
+	})
+
+	t.Run("unset DW_ROOT falls back to ~/dw, absolute", func(t *testing.T) {
+		t.Setenv("DW_ROOT", "")
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+		want := filepath.Join(home, "dw")
+		if got := Root(); got != want {
+			t.Errorf("Root() = %q, want %q", got, want)
+		}
+	})
+}
+
 func TestSlugify(t *testing.T) {
 	cases := []struct{ in, want string }{
 		{"Datadog Cost", "datadog-cost"},

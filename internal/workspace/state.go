@@ -33,11 +33,6 @@ const stateTemplate = "# {{title}}\n" +
 	"\n" +
 	"<!-- 先頭行が dw の一覧に出る -->\n"
 
-// maxStateLines caps how much of STATE.md readState looks at — title and the
-// first open question both live near the top, so there is no need to read
-// (or hold in memory) an entire long document.
-const maxStateLines = 40
-
 // renderState fills stateTemplate's {{title}} placeholder with the raw topic
 // string the user typed (trimmed, not slugified).
 func renderState(title string) string {
@@ -54,8 +49,13 @@ type stateInfo struct {
 // missing file, missing H1, missing "## 未決の問い" section, a section that
 // is empty or contains only an HTML comment — comes back as a zero-value
 // field; callers fall back to the directory topic and an empty question.
+//
+// It reads the whole file rather than a fixed prefix: STATE.md is meant to
+// grow (前提 and 却下した案 accumulate dated entries over a topic's life), and
+// a line cap would eventually push "## 未決の問い" out of view, silently
+// blanking the one column dw's listing exists to show.
 func readState(dir string) stateInfo {
-	lines := readLines(filepath.Join(dir, stateFileName), maxStateLines)
+	lines := readLines(filepath.Join(dir, stateFileName))
 	lines = skipFrontmatter(lines) // tolerate old data that still has YAML frontmatter
 	return stateInfo{
 		title:      firstHeading(lines),
@@ -63,8 +63,8 @@ func readState(dir string) stateInfo {
 	}
 }
 
-// readLines returns up to maxLines lines of path, or nil if it can't be opened.
-func readLines(path string, maxLines int) []string {
+// readLines returns every line of path, or nil if it can't be opened.
+func readLines(path string) []string {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil
@@ -73,7 +73,7 @@ func readLines(path string, maxLines int) []string {
 
 	var lines []string
 	sc := bufio.NewScanner(f)
-	for len(lines) < maxLines && sc.Scan() {
+	for sc.Scan() {
 		lines = append(lines, strings.TrimRight(sc.Text(), "\r"))
 	}
 	return lines

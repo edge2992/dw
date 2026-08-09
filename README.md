@@ -107,6 +107,14 @@ The only configuration knob. Defaults to `~/dw`; set it to relocate the workspac
 export DW_ROOT=~/discussions
 ```
 
+Every path `dw` prints is absolute — `Root()` normalizes `DW_ROOT` against the
+current directory if it isn't already absolute. Still, set it to something
+that's absolute up front (`~/discussions`, which your shell expands before
+`dw` ever sees it, or `$HOME/discussions`), not a bare relative path like
+`discussions`: since the wrapper `cd`s you into a resolved workspace, running
+`dw` again from inside one would re-resolve a relative `DW_ROOT` under that
+workspace instead of your intended root.
+
 ## A note on `CLAUDE.md` and long sessions
 
 Claude Code loads `CLAUDE.md` files by walking up the directory tree from the working directory, so running `claude` inside `<root>/<topic>/` loads `<root>/CLAUDE.md` in full at launch. What isn't documented is whether that ancestor file is *re-injected* after `/compact` the way the project-root `CLAUDE.md` is — so on a very long session, the convention may fade before `STATE.md`'s content does. If you notice Claude drifting from the convention late in a long session, that's the likely cause; re-reading `<root>/CLAUDE.md` explicitly is the workaround.

@@ -37,12 +37,22 @@ var ErrNotFound = errors.New("no workspace found at that path")
 
 // Root returns the workspace root: $DW_ROOT if set, else ~/dw. There is no
 // config file — this environment variable is the only knob.
+//
+// The result is always made absolute. Every path dw prints is documented as
+// absolute (see the TSV contract in main.go), and a relative DW_ROOT would
+// break that promise in a way that compounds: the shell wrapper cd's into a
+// resolved workspace, so the next invocation would resolve the same relative
+// DW_ROOT underneath it, nesting roots deeper on every visit.
 func Root() string {
-	if r := os.Getenv("DW_ROOT"); r != "" {
-		return r
+	r := os.Getenv("DW_ROOT")
+	if r == "" {
+		home, _ := os.UserHomeDir()
+		r = filepath.Join(home, "dw")
 	}
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, "dw")
+	if abs, err := filepath.Abs(r); err == nil {
+		return abs
+	}
+	return r
 }
 
 // Slugify normalizes a free-form topic into a filesystem-friendly slug.
