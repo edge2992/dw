@@ -1,8 +1,10 @@
-// Package workspace handles discovery and creation of discussion projects
-// laid out as <root>/<category>/<YYYY-MM-DD>-<topic-slug>/.
+// Package workspace discovers and creates discussion workspaces laid out as
+// <root>/<YYYY-MM-DD>-<topic-slug>/STATE.md. See docs/concepts.md for the
+// concept these types and functions implement.
 package workspace
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -14,25 +16,39 @@ import (
 
 // Project is a single discussion workspace directory.
 type Project struct {
-	Category string `json:"category"` // e.g. "research"
-	Name     string `json:"name"`     // directory name, e.g. "2026-06-13-pc-setup"
-	Topic    string `json:"topic"`    // slug without the date prefix, e.g. "pc-setup"
-	Date     string `json:"date"`     // "2026-06-13", or "" when the dir has no date prefix
-	Title    string `json:"title"`    // title from README frontmatter, falls back to Topic
-	Status   string `json:"status"`   // status from README frontmatter, e.g. "active"
-	Tags     string `json:"tags"`     // raw tags from README frontmatter, e.g. "[gpu, linux]"
-	Created  string `json:"created"`  // created date from README frontmatter
-	Path     string `json:"path"`     // absolute path
+	Name  string // directory name, e.g. "2026-08-08-datadog-cost"
+	Topic string // slug without the date prefix, e.g. "datadog-cost"
+	Date  string // "2026-08-08", or "" when the dir has no date prefix
+	Path  string // absolute path
 }
 
 var datePrefix = regexp.MustCompile(`^(\d{4}-\d{2}-\d{2})-(.*)$`)
 
 var slugDashes = regexp.MustCompile(`-+`)
 
+// ErrEmptyTopic is returned by Resolve and Create when arg/rawTopic has no
+// letters or digits to slug (e.g. "", "!!!").
+var ErrEmptyTopic = errors.New("topic has no letters or digits to slug")
+
+// ErrNotFound is returned by Resolve when arg looks like an absolute path but
+// does not match any existing workspace. Resolve never creates a directory at
+// an arbitrary absolute path, so this is the terminal outcome for that case.
+var ErrNotFound = errors.New("no workspace found at that path")
+
+// Root returns the workspace root: $DW_ROOT if set, else ~/dw. There is no
+// config file — this environment variable is the only knob.
+func Root() string {
+	if r := os.Getenv("DW_ROOT"); r != "" {
+		return r
+	}
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, "dw")
+}
+
 // Slugify normalizes a free-form topic into a filesystem-friendly slug.
-// Unicode letters/numbers are kept (so Japanese topics survive); whitespace and
-// separators collapse to "-", and other punctuation/symbols are dropped. May
-// return "" when the input has no letters or numbers (e.g. "!!!").
+// Unicode letters/numbers are kept (so Japanese topics survive); whitespace
+// and separators collapse to "-", and other punctuation/symbols are dropped.
+// May return "" when the input has no letters or numbers (e.g. "!!!").
 func Slugify(s string) string {
 	s = strings.ToLower(strings.TrimSpace(s))
 	var b strings.Builder
@@ -47,27 +63,22 @@ func Slugify(s string) string {
 	return strings.Trim(slugDashes.ReplaceAllString(b.String(), "-"), "-")
 }
 
-// parseProject builds a Project from a category and directory name.
-func parseProject(category, name, path string) Project {
-	p := Project{Category: category, Name: name, Path: path, Topic: name}
+// parseProject builds a Project from a directory name found directly under root.
+func parseProject(name, path string) Project {
+	p := Project{Name: name, Topic: name, Path: path}
 	if m := datePrefix.FindStringSubmatch(name); m != nil {
 		p.Date = m[1]
 		p.Topic = m[2]
 	}
-	fm := readFrontmatter(path)
-	p.Title = fm.title
-	if p.Title == "" {
-		p.Title = p.Topic
-	}
-	p.Status = fm.status
-	p.Tags = fm.tags
-	p.Created = fm.created
 	return p
 }
 
-// Scan walks root/<category>/<project> and returns all projects, most recent first.
+// Scan lists the workspaces directly under root (one level, no category
+// hierarchy). Dot-directories (.git, .obsidian, …) are skipped. Directories
+// without a date prefix are still returned, with Date == "", so they are
+// never silently dropped — sortProjects just puts them last.
 func Scan(root string) ([]Project, error) {
-	cats, err := os.ReadDir(root)
+	entries, err := os.ReadDir(root)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
@@ -75,21 +86,11 @@ func Scan(root string) ([]Project, error) {
 		return nil, err
 	}
 	var projects []Project
-	for _, c := range cats {
-		if !c.IsDir() {
+	for _, e := range entries {
+		if !e.IsDir() || strings.HasPrefix(e.Name(), ".") {
 			continue
 		}
-		catPath := filepath.Join(root, c.Name())
-		entries, err := os.ReadDir(catPath)
-		if err != nil {
-			continue
-		}
-		for _, e := range entries {
-			if !e.IsDir() {
-				continue
-			}
-			projects = append(projects, parseProject(c.Name(), e.Name(), filepath.Join(catPath, e.Name())))
-		}
+		projects = append(projects, parseProject(e.Name(), filepath.Join(root, e.Name())))
 	}
 	sortProjects(projects)
 	return projects, nil
@@ -98,7 +99,7 @@ func Scan(root string) ([]Project, error) {
 // sortProjects orders dated projects newest-first, then undated ones last.
 // Without this, a plain Name-descending sort would float letter-prefixed or
 // undated dirs above dated ones (ASCII letters sort after digits), so the
-// default selection would land on a legacy dir instead of the newest project.
+// default ordering would bury the newest project under legacy directories.
 func sortProjects(ps []Project) {
 	sort.SliceStable(ps, func(i, j int) bool {
 		di, dj := ps[i].Date != "", ps[j].Date != ""
@@ -112,90 +113,91 @@ func sortProjects(ps []Project) {
 	})
 }
 
-// Categories returns the available categories: the configured base list first
-// (in its given order, de-duplicated), then any extra categories found on disk,
-// sorted. The base normally comes from config (config.Config.Categories), which
-// defaults to DefaultCategories when the user has not set it.
-func Categories(base []string, projects []Project) []string {
-	seen := map[string]bool{}
-	out := make([]string, 0, len(base))
-	for _, d := range base {
-		if seen[d] {
-			continue
-		}
-		seen[d] = true
-		out = append(out, d)
-	}
-	var extra []string
-	for _, p := range projects {
-		if !seen[p.Category] {
-			seen[p.Category] = true
-			extra = append(extra, p.Category)
-		}
-	}
-	sort.Strings(extra)
-	return append(out, extra...)
-}
-
-// DefaultCategories is the built-in category set used when the config omits (or
-// empties) the categories list. config.Resolve seeds Config.Categories from it,
-// and that value is what Categories receives as its base.
-var DefaultCategories = []string{"research", "incident", "discussion", "scratch"}
-
-// Create makes <root>/<category>/<date>-<slug>/ with a README and a CLAUDE.md
-// rendered from tmpls. now supplies the date so callers/tests stay deterministic.
-func Create(root, category, topic string, now time.Time, tmpls Templates) (Project, error) {
-	date := now.Format("2006-01-02")
-	// The directory name is slugified, but the README title keeps the topic the
-	// user actually typed (casing and spaces), since that title is what the list
-	// shows on the next scan.
-	slug := Slugify(topic)
-	title := strings.TrimSpace(topic)
+// Create scaffolds a new workspace <root>/<date>-<slug>/STATE.md for
+// rawTopic, and writes the root CLAUDE.md convention file too if root doesn't
+// have one yet (see convention.go). rawTopic is only trimmed, not slugified,
+// before it becomes the STATE.md title — the slug is just the directory name.
+// now supplies the date so callers/tests stay deterministic.
+func Create(root, rawTopic string, now time.Time) (Project, error) {
+	title := strings.TrimSpace(rawTopic)
+	slug := Slugify(title)
 	if slug == "" {
-		// no letters/numbers to slug: fall back, keeping title and dir in sync
-		slug = "untitled"
-		title = "untitled"
+		return Project{}, ErrEmptyTopic
 	}
+	date := now.Format("2006-01-02")
 	name := date + "-" + slug
-	path := filepath.Join(root, category, name)
+	path := filepath.Join(root, name)
 	if err := os.MkdirAll(path, 0o755); err != nil {
 		return Project{}, err
 	}
-	for _, f := range []struct{ name, tmpl string }{
-		{"README.md", tmpls.README},
-		{"CLAUDE.md", tmpls.ClaudeMD},
-	} {
-		content := RenderTemplate(f.tmpl, title, category, date)
-		if _, err := writeIfAbsent(filepath.Join(path, f.name), content, 0o644); err != nil {
-			return Project{}, err
-		}
-	}
-	p := parseProject(category, name, path)
-	// The .claude/ plumbing rides along with every new workspace, so a fresh
-	// one and a `dw scaffold`ed old one end up identical.
-	if _, err := EnsureClaudeSettings(p); err != nil {
+	if _, err := writeIfAbsent(filepath.Join(path, stateFileName), renderState(title), 0o644); err != nil {
 		return Project{}, err
 	}
-	return p, nil
+	if err := writeConventionIfAbsent(root); err != nil {
+		return Project{}, err
+	}
+	return parseProject(name, path), nil
 }
 
-// EnsureClaudeMD writes p's CLAUDE.md from tmpl when the file is missing,
-// reporting whether it wrote one. It backfills workspaces created before dw
-// scaffolded CLAUDE.md; an existing file is always left alone.
-func EnsureClaudeMD(p Project, tmpl string) (bool, error) {
-	// Undated directories have no Date to render, so fall back to the frontmatter
-	// created: value rather than leaving the placeholder in the output.
-	date := p.Date
-	if date == "" {
-		date = p.Created
+// Resolve finds the workspace(s) under root matching arg, creating one when
+// nothing matches at all. The algorithm (see docs in the repo's task spec /
+// docs/concepts.md "Operations"):
+//
+//  1. Exact match on Topic, Name, or (for an absolute arg) Path wins outright
+//     — one result, nothing created.
+//  2. Otherwise, partial match (strings.Contains on Topic): one result if
+//     there's exactly one, or every match (fzf's job to disambiguate) if
+//     there's more than one.
+//  3. Otherwise, a new workspace is created.
+//
+// An absolute arg that doesn't exactly match an existing workspace returns
+// ErrNotFound instead of falling through to partial-match/create — Resolve
+// never creates a directory at an arbitrary absolute path.
+//
+// created reports whether Resolve made a new directory. Callers should call
+// SaveLast only when Resolve returns exactly one match — see main.go.
+func Resolve(root, arg string) (matches []Project, created bool, err error) {
+	trimmed := strings.TrimSpace(arg)
+	slug := Slugify(trimmed)
+	if slug == "" {
+		return nil, false, ErrEmptyTopic
 	}
-	content := RenderTemplate(tmpl, p.Title, p.Category, date)
-	return writeIfAbsent(filepath.Join(p.Path, "CLAUDE.md"), content, 0o644)
+
+	projects, err := Scan(root)
+	if err != nil {
+		return nil, false, err
+	}
+
+	abs := filepath.IsAbs(trimmed)
+	for _, p := range projects {
+		if p.Topic == slug || p.Name == slug || (abs && p.Path == trimmed) {
+			return []Project{p}, false, nil
+		}
+	}
+	if abs {
+		return nil, false, ErrNotFound
+	}
+
+	var partial []Project
+	for _, p := range projects {
+		if strings.Contains(p.Topic, slug) {
+			partial = append(partial, p)
+		}
+	}
+	if len(partial) > 0 {
+		return partial, false, nil // already ordered by Scan
+	}
+
+	p, err := Create(root, trimmed, time.Now())
+	if err != nil {
+		return nil, false, err
+	}
+	return []Project{p}, true, nil
 }
 
 // writeIfAbsent writes content to path unless the file already exists, and
-// reports whether it wrote. Scaffolding must never clobber a file the user has
-// since edited, so every write in this package goes through here.
+// reports whether it wrote. Every write in this package goes through here so
+// a workspace is never silently clobbered.
 func writeIfAbsent(path, content string, mode os.FileMode) (bool, error) {
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
 	if os.IsExist(err) {

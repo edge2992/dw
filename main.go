@@ -1,33 +1,21 @@
-// Command dw is an interactive picker for Claude discussion/research workspaces.
+// Command dw is a discussion workspace picker. It resolves a topic to a
+// <DW_ROOT>/<YYYY-MM-DD>-<topic>/ directory (creating it if needed) and
+// prints TSV to stdout; a thin shell wrapper (see `dw init`) does the cd,
+// handing off to fzf when a topic resolves to more than one candidate.
 //
-// It scans the workspace root (from ~/.config/dw/config.yml, default ~/dw) for
-// projects laid out as <category>/<YYYY-MM-DD>-<topic>/, shows a fuzzy list, and
-// prints the selected or newly-created project path to stdout. A thin shell
-// wrapper cd's into it.
-//
-// Subcommands: `dw -` jumps to the last workspace, `dw new` creates one
-// non-interactively, `dw list` lists workspaces, `dw scaffold` backfills the
-// CLAUDE.md and .claude/ files older workspaces lack, `dw root` prints the root,
-// `dw config` manages the config file, `dw init` prints the shell wrapper,
-// `dw version` prints the version, and `dw help` shows usage.
+// See docs/concepts.md for the ideas behind the layout, and the package doc
+// of internal/workspace for the resolution algorithm.
 package main
 
 import (
-	"encoding/json"
-	"flag"
+	"errors"
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"runtime/debug"
 	"strings"
-	"time"
 
-	"github.com/edge2992/dw/internal/config"
-	"github.com/edge2992/dw/internal/tui"
 	"github.com/edge2992/dw/internal/workspace"
-
-	tea "github.com/charmbracelet/bubbletea"
 )
 
 // version is the build version, injected via -ldflags at release time
@@ -35,43 +23,33 @@ import (
 // in which case cmdVersion falls back to the module version from the build info.
 var version = "dev"
 
-const usage = `dw — discussion workspace picker
+const usageTemplate = `dw — discussion workspace picker
 
 Usage:
-  dw                       Open the interactive picker (fuzzy list + create-on-demand)
-  dw -                     Jump to the last workspace (prints its path)
-  dw new <topic> -c <cat>  Create a workspace non-interactively (prints its path)
-  dw list [--json]         List workspaces (category/name, or JSON)
-  dw scaffold [-c <cat>]   Write the missing CLAUDE.md / .claude/ files into existing workspaces
-  dw root                  Print the workspace root
-  dw config <path|init>    Print the config path, or write a starter config
-  dw init <zsh|bash>       Print the shell wrapper that cd's into chosen paths
-  dw version               Print the version
-  dw help                  Show this help
+  dw                  List workspaces as TSV (most recently visited pinned first)
+  dw <topic>          Resolve <topic>: exact match, else partial match(es), else create it
+  dw init <zsh|bash>  Print the shell function that wires dw into fzf and cd
+  dw version          Print the version
+  dw help             Show this help
 
-Configuration:
-  Settings live in ~/.config/dw/config.yml (run 'dw config init' to scaffold it).
-  Keys (all optional, with built-in defaults): root, templates_dir, categories.
-  DW_CONFIG   Override the config file location (path only)
+Output (stdout, tab-separated, one row per workspace):
+  <absolute path>	<marker + title>	<first open question>
+The marker is "* " for the most recently visited workspace, "  " otherwise.
+When <topic> matches more than one workspace, every match is printed — dw
+never picks one for you; the shell wrapper hands the rows to fzf.
 
-dw prints the chosen path to stdout; cd is done by a shell wrapper.
-Enable it once with:  eval "$(dw init zsh)"   (or bash)
+Enable shell integration once with:  eval "$(dw init zsh)"   (or bash)
+
+Root: %s
 `
 
-func main() { os.Exit(run(os.Args, os.Stdout, os.Stderr, time.Now())) }
+func main() { os.Exit(run(os.Args, os.Stdout, os.Stderr)) }
 
 // run dispatches argv to a subcommand and returns the process exit code.
-// argv[0] is the program name; argv[1] is the subcommand (or "-", or absent).
-func run(argv []string, stdout, stderr io.Writer, now time.Time) int {
-	// Subcommands that never read the workspace config are dispatched first, so a
-	// malformed ~/.config/dw/config.yml can't break `dw help`, the `dw init` shell
-	// wrapper, or the `dw config` commands you'd reach for to repair it.
+// argv[0] is the program name; argv[1] is the subcommand or topic (if any).
+func run(argv []string, stdout, stderr io.Writer) int {
 	if len(argv) >= 2 {
 		switch argv[1] {
-		case "-":
-			return cmdJump(stdout, stderr)
-		case "config":
-			return cmdConfig(stdout, stderr, argv[2:])
 		case "init":
 			return cmdInit(stdout, stderr, argv[2:])
 		case "version", "--version", "-v":
@@ -81,159 +59,100 @@ func run(argv []string, stdout, stderr io.Writer, now time.Time) int {
 		}
 	}
 
-	cfg, err := config.Load()
-	if err != nil {
-		fmt.Fprintln(stderr, "dw: config:", err)
-		return 1
-	}
+	root := workspace.Root()
 	if len(argv) < 2 {
-		return runTUI(cfg, stdout, stderr, now) // bare `dw`
+		return cmdList(root, stdout, stderr)
 	}
-	switch argv[1] {
-	case "new":
-		return cmdNew(cfg, stdout, stderr, argv[2:], now)
-	case "scaffold":
-		return cmdScaffold(cfg, stdout, stderr, argv[2:])
-	case "list":
-		return cmdList(cfg, stdout, stderr, argv[2:])
-	case "root":
-		return cmdRoot(cfg, stdout)
-	default:
-		fmt.Fprintf(stderr, "dw: unknown command %q\nRun 'dw help' for usage.\n", argv[1])
-		return 2
-	}
+	// Everything after argv[0] that isn't a reserved subcommand is the topic,
+	// joined back with spaces — so an unquoted `dw my topic` behaves the same
+	// as `dw "my topic"`.
+	topic := strings.Join(argv[1:], " ")
+	return cmdResolve(root, stdout, stderr, topic)
 }
 
-// runTUI scans the root, runs the interactive picker, prints the chosen path,
-// and remembers it for next time. The UI renders to stderr so stdout carries
-// only the chosen path.
-func runTUI(cfg config.Config, stdout, stderr io.Writer, now time.Time) int {
-	projects, err := workspace.Scan(cfg.Root)
+// cmdList prints every workspace under root as TSV (`dw` with no arguments).
+// It never touches the "last visited" pin — only resolving a single
+// workspace does that (see cmdResolve).
+func cmdList(root string, stdout, stderr io.Writer) int {
+	projects, err := workspace.Scan(root)
 	if err != nil {
 		fmt.Fprintln(stderr, "dw: scan:", err)
 		return 1
 	}
-
-	categories := workspace.Categories(cfg.Categories, projects)
-	model := tui.New(cfg.Root, now, projects, workspace.LastPath(), categories, cfg.TemplatesDir)
-	// Render the UI to stderr so stdout carries only the chosen path.
-	p := tea.NewProgram(model, tea.WithOutput(stderr))
-	final, err := p.Run()
-	if err != nil {
-		fmt.Fprintln(stderr, "dw:", err)
-		return 1
-	}
-
-	fm, ok := final.(tui.Model)
-	if !ok {
-		fmt.Fprintln(stderr, "dw: unexpected model type")
-		return 1
-	}
-	if fm.Err != nil {
-		fmt.Fprintln(stderr, "dw:", fm.Err)
-		return 1
-	}
-	if fm.Result == "" {
-		return 1 // aborted: no cd
-	}
-	// Remember the choice so `dw -` and the startup pin can resume it next time.
-	_ = workspace.SaveLast(fm.Result)
-	fmt.Fprintln(stdout, fm.Result)
-	return 0
-}
-
-// cmdJump prints the last chosen workspace without opening the UI (`dw -`).
-func cmdJump(stdout, stderr io.Writer) int {
 	last := workspace.LastPath()
-	if last == "" {
-		fmt.Fprintln(stderr, "dw: no previous workspace")
-		return 1
-	}
-	fmt.Fprintln(stdout, last)
+	printRows(stdout, workspace.PinLast(projects, last), last)
 	return 0
 }
 
-// cmdNew creates a workspace non-interactively and prints its path, so the
-// shell wrapper can cd into it (`dw new <topic> --category <cat>`). It is the
-// scriptable counterpart of the picker's create-on-demand flow, sharing the
-// same workspace.Create core. We hand-parse args (instead of flag.FlagSet) so
-// the topic and -c/--category can appear in any order.
-func cmdNew(cfg config.Config, stdout, stderr io.Writer, args []string, now time.Time) int {
-	const usage = "Usage: dw new <topic> --category <cat>"
-	var category string
-	var topicParts []string
-	for i := 0; i < len(args); i++ {
-		a := args[i]
+// cmdResolve resolves arg to one or more workspaces (`dw <topic>`), creating
+// one if nothing matches. SaveLast is called only when Resolve settles on
+// exactly one workspace — printing several candidates for fzf to choose
+// among is not itself a "visit".
+func cmdResolve(root string, stdout, stderr io.Writer, arg string) int {
+	matches, _, err := workspace.Resolve(root, arg)
+	if err != nil {
 		switch {
-		case a == "--category" || a == "-c":
-			if i+1 >= len(args) {
-				fmt.Fprintf(stderr, "dw new: %s needs a value\n%s\n", a, usage)
-				return 2
-			}
-			i++
-			category = args[i]
-		case strings.HasPrefix(a, "--category="):
-			category = strings.TrimPrefix(a, "--category=")
-		case strings.HasPrefix(a, "-c="):
-			category = strings.TrimPrefix(a, "-c=")
+		case errors.Is(err, workspace.ErrEmptyTopic):
+			fmt.Fprintln(stderr, "dw:", err)
+			return 2
+		case errors.Is(err, workspace.ErrNotFound):
+			fmt.Fprintln(stderr, "dw:", err)
+			return 1
 		default:
-			topicParts = append(topicParts, a)
+			fmt.Fprintln(stderr, "dw:", err)
+			return 1
 		}
 	}
-	topic := strings.TrimSpace(strings.Join(topicParts, " "))
-	if topic == "" {
-		fmt.Fprintf(stderr, "dw new: missing topic\n%s\n", usage)
-		return 2
+
+	last := workspace.LastPath()
+	if len(matches) == 1 {
+		if err := workspace.SaveLast(matches[0].Path); err != nil {
+			fmt.Fprintln(stderr, "dw: warning: could not save last workspace:", err)
+		} else {
+			last = matches[0].Path
+		}
 	}
-	category = strings.TrimSpace(category)
-	if category == "" {
-		fmt.Fprintf(stderr, "dw new: --category is required\n%s\n", usage)
-		return 2
-	}
-	// Match the picker, which only offers create when the value yields a
-	// non-empty slug — so the two creation paths accept the same inputs.
-	if workspace.Slugify(topic) == "" {
-		fmt.Fprintf(stderr, "dw new: topic %q has no letters or digits to slugify\n%s\n", topic, usage)
-		return 2
-	}
-	catSlug := workspace.Slugify(category)
-	if catSlug == "" {
-		fmt.Fprintf(stderr, "dw new: category %q has no letters or digits to slugify\n%s\n", category, usage)
-		return 2
-	}
-	// The picker slugifies a new category name before creating it; do the same
-	// so `dw new -c "My Cat"` and the picker both land in my-cat/, never two
-	// directories for the same logical category.
-	category = catSlug
-	tmpls := workspace.ResolveTemplates(cfg.TemplatesDir, category)
-	p, err := workspace.Create(cfg.Root, category, topic, now, tmpls)
-	if err != nil {
-		fmt.Fprintln(stderr, "dw:", err)
-		return 1
-	}
-	// Remember the choice so `dw -` and the startup pin can resume it next time.
-	_ = workspace.SaveLast(p.Path)
-	fmt.Fprintln(stdout, p.Path)
+	printRows(stdout, matches, last)
 	return 0
 }
 
-// shellInit is the wrapper function dw prints from `dw init`. It captures the
-// path dw emits for the path-returning subcommands (bare dw, "-", new) and cd's into
-// it; every other subcommand passes through untouched. zsh and bash share this
+// printRows writes one TSV row per project (see workspace.Project.TSVRow).
+func printRows(w io.Writer, projects []workspace.Project, last string) {
+	for _, p := range projects {
+		fmt.Fprintln(w, p.TSVRow(last))
+	}
+}
+
+// shellInit is the function dw prints from `dw init`. It captures the TSV dw
+// emits, hands multi-row output to fzf when available (falling back to a
+// plain printed list otherwise), re-resolves the chosen absolute path through
+// `command dw` (so that becomes the new "last visited" workspace — see
+// internal/workspace.Resolve), and cd's into it. zsh and bash share this
 // POSIX-compatible body.
 const shellInit = `dw() {
   case "${1:-}" in
-    ''|-|new)
-      local dir
-      dir="$(command dw "$@")" && [ -n "$dir" ] && cd "$dir" ;;
-    *)
+    init|help|version|--help|-h|--version|-v)
       command dw "$@" ;;
+    *)
+      local rows
+      rows="$(command dw "$@")" || return
+      [ -n "$rows" ] || return 0
+      if [ "$(printf '%s\n' "$rows" | wc -l)" -gt 1 ]; then
+        if command -v fzf >/dev/null 2>&1; then
+          rows="$(printf '%s\n' "$rows" | fzf --delimiter=$'\t' --with-nth=2.. \
+                    --preview='head -40 {1}/STATE.md' --preview-window=right,60%)" || return
+          rows="$(command dw "${rows%%$'\t'*}")" || return
+        else
+          printf '%s\n' "$rows" | cut -f2-
+          return 0
+        fi
+      fi
+      cd "${rows%%$'\t'*}" ;;
   esac
 }
 `
 
-// cmdInit prints the shell wrapper for the requested shell (`dw init zsh|bash`),
-// so users can `eval "$(dw init zsh)"` instead of hand-copying it.
+// cmdInit prints the shell wrapper for the requested shell (`dw init zsh|bash`).
 func cmdInit(stdout, stderr io.Writer, args []string) int {
 	if len(args) != 1 {
 		fmt.Fprintln(stderr, "dw init: specify a shell\nUsage: dw init <zsh|bash>")
@@ -241,174 +160,13 @@ func cmdInit(stdout, stderr io.Writer, args []string) int {
 	}
 	switch args[0] {
 	case "zsh", "bash":
-		fmt.Fprint(stdout, shellInit)
+		// io.WriteString, not fmt.Fprint: shellInit is a shell script full of
+		// literal %-directives (printf '%s\n' ...), which `go vet` would
+		// otherwise flag as a missing Printf argument.
+		io.WriteString(stdout, shellInit) //nolint:errcheck // best-effort; a broken stdout pipe is not actionable here
 		return 0
 	default:
 		fmt.Fprintf(stderr, "dw init: unsupported shell %q (supported: zsh, bash)\n", args[0])
-		return 2
-	}
-}
-
-// cmdScaffold backfills the files that workspaces created before dw scaffolded
-// them are missing — CLAUDE.md and the .claude/ tree — so an old workspace ends
-// up matching a freshly created one (`dw scaffold [-c <cat>] [--dry-run]`).
-// Existing files are never touched, so it is safe to re-run and needs no
-// confirmation.
-func cmdScaffold(cfg config.Config, stdout, stderr io.Writer, args []string) int {
-	fs := flag.NewFlagSet("scaffold", flag.ContinueOnError)
-	fs.SetOutput(stderr)
-	category := fs.String("c", "", "only scaffold this category")
-	fs.StringVar(category, "category", "", "only scaffold this category")
-	dryRun := fs.Bool("dry-run", false, "report what would be written without writing")
-	if err := fs.Parse(args); err != nil {
-		return 2
-	}
-	if fs.NArg() > 0 {
-		fmt.Fprintf(stderr, "dw scaffold: unexpected argument %q\n", fs.Arg(0))
-		return 2
-	}
-	projects, err := workspace.Scan(cfg.Root)
-	if err != nil {
-		fmt.Fprintln(stderr, "dw: scan:", err)
-		return 1
-	}
-
-	// Resolving templates is per-category, so cache it: a root with hundreds of
-	// workspaces would otherwise stat the templates dir once per project.
-	tmplFor := map[string]string{}
-	nClaudeMD, nSettings := 0, 0
-	for _, p := range projects {
-		if *category != "" && p.Category != *category {
-			continue
-		}
-		claude := filepath.Join(p.Path, "CLAUDE.md")
-		if *dryRun {
-			// Lstat, matching the O_EXCL the real write uses: a dangling symlink
-			// is not written through, so it must not be reported as pending.
-			if _, err := os.Lstat(claude); os.IsNotExist(err) {
-				fmt.Fprintln(stdout, claude)
-				nClaudeMD++
-			}
-		} else {
-			tmpl, ok := tmplFor[p.Category]
-			if !ok {
-				tmpl = workspace.ResolveClaudeTemplate(cfg.TemplatesDir, p.Category)
-				tmplFor[p.Category] = tmpl
-			}
-			wrote, err := workspace.EnsureClaudeMD(p, tmpl)
-			if err != nil {
-				fmt.Fprintln(stderr, "dw scaffold:", err)
-				return 1
-			}
-			if wrote {
-				fmt.Fprintln(stdout, claude)
-				nClaudeMD++
-			}
-		}
-
-		// The .claude/ assets are fixed, so both paths ask the workspace package
-		// for the same plan instead of each deciding what belongs there.
-		var paths []string
-		var err error
-		if *dryRun {
-			paths, err = workspace.PendingClaudeSettings(p)
-		} else {
-			paths, err = workspace.EnsureClaudeSettings(p)
-		}
-		if err != nil {
-			fmt.Fprintln(stderr, "dw scaffold:", err)
-			return 1
-		}
-		for _, path := range paths {
-			fmt.Fprintln(stdout, path)
-		}
-		nSettings += len(paths)
-	}
-	verb := "wrote"
-	if *dryRun {
-		verb = "would write"
-	}
-	fmt.Fprintf(stdout, "%s %d CLAUDE.md, %d .claude/ file(s)\n", verb, nClaudeMD, nSettings)
-	return 0
-}
-
-// cmdList prints every workspace as "category/name" lines, or as JSON with --json.
-func cmdList(cfg config.Config, stdout, stderr io.Writer, args []string) int {
-	fs := flag.NewFlagSet("list", flag.ContinueOnError)
-	fs.SetOutput(stderr)
-	asJSON := fs.Bool("json", false, "output as JSON")
-	if err := fs.Parse(args); err != nil {
-		return 2
-	}
-	if fs.NArg() > 0 {
-		fmt.Fprintf(stderr, "dw list: unexpected argument %q\n", fs.Arg(0))
-		return 2
-	}
-	projects, err := workspace.Scan(cfg.Root)
-	if err != nil {
-		fmt.Fprintln(stderr, "dw: scan:", err)
-		return 1
-	}
-	if *asJSON {
-		if projects == nil {
-			projects = []workspace.Project{} // emit "[]" rather than "null"
-		}
-		b, err := json.MarshalIndent(projects, "", "  ")
-		if err != nil {
-			fmt.Fprintln(stderr, "dw:", err)
-			return 1
-		}
-		fmt.Fprintln(stdout, string(b))
-		return 0
-	}
-	for _, p := range projects {
-		fmt.Fprintln(stdout, p.Category+"/"+p.Name) // literal "/" keeps output pipe-stable
-	}
-	return 0
-}
-
-// cmdRoot prints the resolved workspace root (`dw root`).
-func cmdRoot(cfg config.Config, stdout io.Writer) int {
-	fmt.Fprintln(stdout, cfg.Root)
-	return 0
-}
-
-// cmdConfig manages the config file (`dw config path|init`). `path` prints the
-// resolved config location; `init` writes a starter config there, refusing to
-// clobber an existing file so a hand-edited config is never lost.
-func cmdConfig(stdout, stderr io.Writer, args []string) int {
-	const usage = "Usage: dw config <path|init>"
-	if len(args) != 1 {
-		fmt.Fprintln(stderr, usage)
-		return 2
-	}
-	switch args[0] {
-	case "path":
-		fmt.Fprintln(stdout, config.Path())
-		return 0
-	case "init":
-		p := config.Path()
-		switch _, err := os.Stat(p); {
-		case err == nil:
-			fmt.Fprintf(stderr, "dw config: %s already exists, leaving it untouched\n", p)
-			fmt.Fprintln(stdout, p)
-			return 0
-		case !os.IsNotExist(err):
-			fmt.Fprintln(stderr, "dw config:", err)
-			return 1
-		}
-		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-			fmt.Fprintln(stderr, "dw config:", err)
-			return 1
-		}
-		if err := os.WriteFile(p, config.DefaultYAML(), 0o644); err != nil {
-			fmt.Fprintln(stderr, "dw config:", err)
-			return 1
-		}
-		fmt.Fprintln(stdout, p)
-		return 0
-	default:
-		fmt.Fprintf(stderr, "dw config: unknown subcommand %q\n%s\n", args[0], usage)
 		return 2
 	}
 }
@@ -427,8 +185,8 @@ func cmdVersion(stdout io.Writer) int {
 	return 0
 }
 
-// cmdHelp prints the usage text (`dw help`).
+// cmdHelp prints the usage text, including the resolved root (`dw help`).
 func cmdHelp(stdout io.Writer) int {
-	fmt.Fprint(stdout, usage)
+	fmt.Fprintf(stdout, usageTemplate, workspace.Root())
 	return 0
 }
