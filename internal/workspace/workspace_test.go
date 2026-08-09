@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -8,391 +9,307 @@ import (
 	"time"
 )
 
-// testTemplates is what Create receives when a test doesn't care about template
-// contents — the built-ins, exactly as the real callers resolve them.
-func testTemplates(category string) Templates {
-	return Templates{README: DefaultTemplate, ClaudeMD: DefaultClaudeTemplate(category)}
+func TestRoot_AlwaysAbsolute(t *testing.T) {
+	t.Run("relative DW_ROOT is made absolute", func(t *testing.T) {
+		wd, err := os.Getwd()
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("DW_ROOT", "some-relative-dir")
+		want := filepath.Join(wd, "some-relative-dir")
+		if got := Root(); got != want {
+			t.Errorf("Root() = %q, want %q", got, want)
+		}
+		if !filepath.IsAbs(Root()) {
+			t.Errorf("Root() = %q, want an absolute path", Root())
+		}
+	})
+
+	t.Run("absolute DW_ROOT is left as-is", func(t *testing.T) {
+		abs := filepath.Join(t.TempDir(), "root")
+		t.Setenv("DW_ROOT", abs)
+		if got := Root(); got != abs {
+			t.Errorf("Root() = %q, want %q", got, abs)
+		}
+	})
+
+	t.Run("unset DW_ROOT falls back to ~/dw, absolute", func(t *testing.T) {
+		t.Setenv("DW_ROOT", "")
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+		want := filepath.Join(home, "dw")
+		if got := Root(); got != want {
+			t.Errorf("Root() = %q, want %q", got, want)
+		}
+	})
 }
 
 func TestSlugify(t *testing.T) {
-	cases := map[string]string{
-		"k8s pod oom":     "k8s-pod-oom",
-		"  PC_Setup  ":    "pc-setup",
-		"Hello, World!":   "hello-world",
-		"multi   space":   "multi-space",
-		"already-slugged": "already-slugged",
-		"---trim---":      "trim",
-		"":                "",
-		"機械学習 調査":         "機械学習-調査", // unicode letters are preserved
-		"PR #42 fix":      "pr-42-fix",
-		"!!!":             "", // no letters/numbers -> empty
+	cases := []struct{ in, want string }{
+		{"Datadog Cost", "datadog-cost"},
+		{"  spaced out  ", "spaced-out"},
+		{"under_score and-dash", "under-score-and-dash"},
+		{"!!!", ""},
+		{"", ""},
+		{"機械学習 調査", "機械学習-調査"},
+		{"a---b", "a-b"},
 	}
-	for in, want := range cases {
-		if got := Slugify(in); got != want {
-			t.Errorf("Slugify(%q) = %q, want %q", in, got, want)
+	for _, c := range cases {
+		if got := Slugify(c.in); got != c.want {
+			t.Errorf("Slugify(%q) = %q, want %q", c.in, got, c.want)
 		}
 	}
 }
 
-func TestParseProject(t *testing.T) {
-	p := parseProject("research", "2026-06-13-pc-setup", "/x")
-	if p.Date != "2026-06-13" || p.Topic != "pc-setup" {
-		t.Errorf("got date=%q topic=%q", p.Date, p.Topic)
-	}
-	// directory without date prefix
-	p2 := parseProject("scratch", "legacy-notes", "/y")
-	if p2.Date != "" || p2.Topic != "legacy-notes" {
-		t.Errorf("no-date dir: got date=%q topic=%q", p2.Date, p2.Topic)
-	}
-}
-
-func TestRenderTemplate(t *testing.T) {
-	out := RenderTemplate(DefaultTemplate, "my-topic", "research", "2026-06-14")
-	for _, want := range []string{"title: my-topic", "category: research", "created: 2026-06-14"} {
-		if !strings.Contains(out, want) {
-			t.Errorf("rendered template missing %q\n%s", want, out)
-		}
-	}
-}
-
-func TestCreateAndScan(t *testing.T) {
-	root := t.TempDir()
-	now := time.Date(2026, 6, 14, 10, 0, 0, 0, time.UTC)
-
-	p, err := Create(root, "research", "K8s Pod OOM", now, testTemplates("research"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if p.Name != "2026-06-14-k8s-pod-oom" {
-		t.Errorf("name = %q", p.Name)
-	}
-	readme := filepath.Join(p.Path, "README.md")
-	if _, err := os.Stat(readme); err != nil {
-		t.Errorf("README not created: %v", err)
-	}
-	// dir name is slugified, but the title keeps the topic as typed
-	if p.Title != "K8s Pod OOM" {
-		t.Errorf("title = %q", p.Title)
-	}
-
-	// second, older project to verify ordering
-	older := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
-	if _, err := Create(root, "incident", "db outage", older, testTemplates("incident")); err != nil {
-		t.Fatal(err)
-	}
-
-	projects, err := Scan(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(projects) != 2 {
-		t.Fatalf("scan found %d projects, want 2", len(projects))
-	}
-	// newest (2026-06-14) first
-	if projects[0].Name != "2026-06-14-k8s-pod-oom" {
-		t.Errorf("ordering wrong, first = %q", projects[0].Name)
-	}
-}
-
-func TestCreateTitleKeepsTypedTopic(t *testing.T) {
-	root := t.TempDir()
-	now := time.Date(2026, 6, 14, 0, 0, 0, 0, time.UTC)
-
-	// casing and spaces survive into the README title, while the dir is slugged
-	p, err := Create(root, "research", "Rust GC 設計メモ", now, testTemplates("research"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if p.Name != "2026-06-14-rust-gc-設計メモ" {
-		t.Errorf("dir name = %q", p.Name)
-	}
-	if p.Title != "Rust GC 設計メモ" {
-		t.Errorf("title = %q, want the topic as typed", p.Title)
-	}
-
-	// symbol-only input has no slug, so both dir and title fall back to "untitled"
-	p2, err := Create(root, "research", "!!!", now, testTemplates("research"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if p2.Name != "2026-06-14-untitled" || p2.Title != "untitled" {
-		t.Errorf("symbol-only: name=%q title=%q", p2.Name, p2.Title)
-	}
-}
-
-func TestCreateDoesNotClobberReadme(t *testing.T) {
-	root := t.TempDir()
-	now := time.Date(2026, 6, 14, 0, 0, 0, 0, time.UTC)
-	p, _ := Create(root, "research", "topic", now, testTemplates("research"))
-	custom := "EDITED BY USER"
-	if err := os.WriteFile(filepath.Join(p.Path, "README.md"), []byte(custom), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	// re-create same project: must not overwrite
-	if _, err := Create(root, "research", "topic", now, testTemplates("research")); err != nil {
-		t.Fatal(err)
-	}
-	b, _ := os.ReadFile(filepath.Join(p.Path, "README.md"))
-	if string(b) != custom {
-		t.Errorf("README was clobbered: %q", string(b))
-	}
-}
-
-func TestCreateWritesClaudeMD(t *testing.T) {
-	root := t.TempDir()
-	now := time.Date(2026, 6, 14, 0, 0, 0, 0, time.UTC)
-	p, err := Create(root, "research", "K8s Pod OOM", now, testTemplates("research"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	b, err := os.ReadFile(filepath.Join(p.Path, "CLAUDE.md"))
-	if err != nil {
-		t.Fatalf("CLAUDE.md not created: %v", err)
-	}
-	got := string(b)
-	want := RenderTemplate(DefaultClaudeTemplate("research"), "K8s Pod OOM", "research", "2026-06-14")
-	if got != want {
-		t.Errorf("CLAUDE.md = %q, want %q", got, want)
-	}
-	if strings.Contains(got, "{{") {
-		t.Errorf("placeholder left unrendered:\n%s", got)
-	}
-}
-
-func TestCreateDoesNotClobberClaudeMD(t *testing.T) {
-	root := t.TempDir()
-	now := time.Date(2026, 6, 14, 0, 0, 0, 0, time.UTC)
-	p, _ := Create(root, "research", "topic", now, testTemplates("research"))
-	custom := "EDITED BY USER"
-	claude := filepath.Join(p.Path, "CLAUDE.md")
-	if err := os.WriteFile(claude, []byte(custom), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := Create(root, "research", "topic", now, testTemplates("research")); err != nil {
-		t.Fatal(err)
-	}
-	b, _ := os.ReadFile(claude)
-	if string(b) != custom {
-		t.Errorf("CLAUDE.md was clobbered: %q", string(b))
-	}
-}
-
-func TestCreateWritesClaudeSettings(t *testing.T) {
-	root := t.TempDir()
-	now := time.Date(2026, 6, 14, 0, 0, 0, 0, time.UTC)
-	p, err := Create(root, "research", "K8s Pod OOM", now, testTemplates("research"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	// A workspace is only Claude-ready once the whole .claude/ tree is there,
-	// so Create must not stop at README.md and CLAUDE.md.
-	for _, rel := range claudeAssetDests {
-		if _, err := os.Stat(filepath.Join(p.Path, rel)); err != nil {
-			t.Errorf("%s not created: %v", rel, err)
-		}
-	}
-}
-
-func TestEnsureClaudeMD(t *testing.T) {
-	root := t.TempDir()
-	// a workspace as it looked before dw scaffolded CLAUDE.md: README only
-	dir := filepath.Join(root, "research", "2026-06-14-legacy")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	readme := "---\ntitle: Legacy Notes\n---\n\n# body\n"
-	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte(readme), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	projects, err := Scan(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(projects) != 1 {
-		t.Fatalf("scan found %d projects, want 1", len(projects))
-	}
-
-	tmpl := DefaultClaudeTemplate("research")
-	wrote, err := EnsureClaudeMD(projects[0], tmpl)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !wrote {
-		t.Fatal("EnsureClaudeMD reported no write for a missing CLAUDE.md")
-	}
-	b, err := os.ReadFile(filepath.Join(dir, "CLAUDE.md"))
-	if err != nil {
-		t.Fatalf("CLAUDE.md not written: %v", err)
-	}
-	// rendered from the frontmatter title and the dir's date prefix
-	if want := RenderTemplate(tmpl, "Legacy Notes", "research", "2026-06-14"); string(b) != want {
-		t.Errorf("CLAUDE.md = %q, want %q", string(b), want)
-	}
-
-	// re-running is a no-op, and never touches a file the user has edited
-	custom := "EDITED BY USER"
-	if err := os.WriteFile(filepath.Join(dir, "CLAUDE.md"), []byte(custom), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	wrote, err = EnsureClaudeMD(projects[0], tmpl)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if wrote {
-		t.Error("EnsureClaudeMD reported a write for an existing CLAUDE.md")
-	}
-	b, _ = os.ReadFile(filepath.Join(dir, "CLAUDE.md"))
-	if string(b) != custom {
-		t.Errorf("CLAUDE.md was clobbered: %q", string(b))
-	}
-}
-
-func TestEnsureClaudeMDUndatedDirUsesCreated(t *testing.T) {
-	root := t.TempDir()
-	// no date prefix, so the date has to come from the frontmatter instead
-	dir := filepath.Join(root, "scratch", "legacy-notes")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	readme := "---\ntitle: Legacy\ncreated: 2026-01-02\n---\n"
-	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte(readme), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	projects, _ := Scan(root)
-	tmpl := "{{title}}|{{category}}|{{date}}"
-	if _, err := EnsureClaudeMD(projects[0], tmpl); err != nil {
-		t.Fatal(err)
-	}
-	b, _ := os.ReadFile(filepath.Join(dir, "CLAUDE.md"))
-	if want := "Legacy|scratch|2026-01-02"; string(b) != want {
-		t.Errorf("CLAUDE.md = %q, want %q", string(b), want)
-	}
-}
-
-func TestEnsureClaudeMDDoesNotFollowDanglingSymlink(t *testing.T) {
-	dir := t.TempDir()
-	target := filepath.Join(dir, "outside.md")
-	claude := filepath.Join(dir, "CLAUDE.md")
-	if err := os.Symlink(target, claude); err != nil {
-		t.Fatal(err)
-	}
-	p := Project{Path: dir, Title: "Legacy", Category: "research"}
-
-	wrote, err := EnsureClaudeMD(p, "scaffolded")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if wrote {
-		t.Error("EnsureClaudeMD reported a write for an existing symlink")
-	}
-	if _, err := os.Stat(target); !os.IsNotExist(err) {
-		t.Errorf("dangling symlink target was written: %v", err)
-	}
-}
-
-func TestScanMissingRoot(t *testing.T) {
-	projects, err := Scan(filepath.Join(t.TempDir(), "does-not-exist"))
-	if err != nil {
-		t.Errorf("missing root should not error, got %v", err)
-	}
-	if projects != nil {
-		t.Errorf("expected nil, got %v", projects)
-	}
-}
-
-func TestScanOrdersDatedBeforeUndated(t *testing.T) {
-	root := t.TempDir()
-	// an undated, letter-prefixed dir would float to the top under a plain
-	// Name-descending sort; it must instead sink below the dated projects.
-	for _, dir := range []string{
-		"research/2026-06-10-older",
-		"research/2026-06-14-newest",
-		"research/zzz-legacy", // undated
-	} {
-		if err := os.MkdirAll(filepath.Join(root, dir), 0o755); err != nil {
+func mkdirs(t *testing.T, root string, names ...string) {
+	t.Helper()
+	for _, n := range names {
+		if err := os.MkdirAll(filepath.Join(root, n), 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
+}
+
+func TestScan(t *testing.T) {
+	root := t.TempDir()
+	mkdirs(t, root,
+		"2026-08-06-team-structure",
+		"2026-08-08-datadog-cost",
+		"2026-08-07-zzz-topic",
+		"no-date-topic",
+		".git",
+		".obsidian",
+	)
+
 	projects, err := Scan(root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"2026-06-14-newest", "2026-06-10-older", "zzz-legacy"}
-	for i, w := range want {
-		if projects[i].Name != w {
-			t.Errorf("order[%d] = %q, want %q", i, projects[i].Name, w)
+	if len(projects) != 4 {
+		t.Fatalf("Scan returned %d projects, want 4 (dot-dirs must be skipped): %+v", len(projects), projects)
+	}
+
+	// Dated projects come first, newest date first; undated ones trail.
+	wantOrder := []string{
+		"2026-08-08-datadog-cost",
+		"2026-08-07-zzz-topic",
+		"2026-08-06-team-structure",
+		"no-date-topic",
+	}
+	for i, name := range wantOrder {
+		if projects[i].Name != name {
+			t.Errorf("projects[%d].Name = %q, want %q (full order: %+v)", i, projects[i].Name, name, projects)
 		}
 	}
-}
 
-func TestReadFrontmatter(t *testing.T) {
-	dir := t.TempDir()
-	readme := "---\ntitle: PC Setup\nstatus: active\ntags: [gpu, linux]\ncreated: 2026-06-13\n---\n\n# body\n"
-	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte(readme), 0o644); err != nil {
-		t.Fatal(err)
+	last := projects[3]
+	if last.Date != "" {
+		t.Errorf("undated dir got Date = %q, want \"\"", last.Date)
 	}
-	p := parseProject("research", "2026-06-13-pc", dir)
-	if p.Title != "PC Setup" || p.Status != "active" || p.Tags != "[gpu, linux]" || p.Created != "2026-06-13" {
-		t.Errorf("got %+v", p)
+	if last.Topic != "no-date-topic" {
+		t.Errorf("undated dir Topic = %q, want %q", last.Topic, "no-date-topic")
 	}
-}
 
-func TestSaveAndLoadLast(t *testing.T) {
-	tmp := t.TempDir()
-	// cover both os.UserCacheDir backends (XDG on Linux, HOME/Library on macOS)
-	// so the test stays isolated and never touches the real cache.
-	t.Setenv("HOME", tmp)
-	t.Setenv("XDG_CACHE_HOME", tmp)
-	if got := LastPath(); got != "" {
-		t.Errorf("expected empty before save, got %q", got)
-	}
-	dir := filepath.Join(tmp, "proj")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := SaveLast(dir); err != nil {
-		t.Fatal(err)
-	}
-	if got := LastPath(); got != dir {
-		t.Errorf("LastPath = %q, want %q", got, dir)
-	}
-	// a recorded path that no longer exists reads back as empty
-	if err := os.RemoveAll(dir); err != nil {
-		t.Fatal(err)
-	}
-	if got := LastPath(); got != "" {
-		t.Errorf("stale path should read empty, got %q", got)
+	first := projects[0]
+	if first.Date != "2026-08-08" || first.Topic != "datadog-cost" {
+		t.Errorf("first project = %+v, want Date=2026-08-08 Topic=datadog-cost", first)
 	}
 }
 
-func TestCategories(t *testing.T) {
-	ps := []Project{{Category: "custom"}, {Category: "research"}}
-	cats := Categories(DefaultCategories, ps)
-	// base defaults + custom, deduped
-	want := map[string]bool{"research": true, "incident": true, "discussion": true, "scratch": true, "custom": true}
-	if len(cats) != len(want) {
-		t.Errorf("got %v", cats)
+func TestScan_MissingRoot(t *testing.T) {
+	projects, err := Scan(filepath.Join(t.TempDir(), "does-not-exist"))
+	if err != nil {
+		t.Fatalf("Scan on a missing root should not error, got %v", err)
 	}
-	for _, c := range cats {
-		if !want[c] {
-			t.Errorf("unexpected category %q", c)
+	if projects != nil {
+		t.Errorf("Scan on a missing root = %+v, want nil", projects)
+	}
+}
+
+func TestCreate(t *testing.T) {
+	root := t.TempDir()
+	now := time.Date(2026, 8, 8, 12, 0, 0, 0, time.UTC)
+
+	p, err := Create(root, "  Datadog Cost  ", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Name != "2026-08-08-datadog-cost" {
+		t.Errorf("Name = %q, want 2026-08-08-datadog-cost", p.Name)
+	}
+	if p.Topic != "datadog-cost" || p.Date != "2026-08-08" {
+		t.Errorf("Topic/Date = %q/%q, want datadog-cost/2026-08-08", p.Topic, p.Date)
+	}
+
+	state, err := os.ReadFile(filepath.Join(p.Path, stateFileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsLine(string(state), "# Datadog Cost") {
+		t.Errorf("STATE.md title should be the raw (trimmed) topic %q, got:\n%s", "# Datadog Cost", state)
+	}
+
+	// The root CLAUDE.md convention file is written alongside the first workspace.
+	rootClaude, err := os.ReadFile(filepath.Join(root, "CLAUDE.md"))
+	if err != nil {
+		t.Fatalf("root CLAUDE.md was not written: %v", err)
+	}
+	if len(rootClaude) == 0 {
+		t.Error("root CLAUDE.md is empty")
+	}
+
+	// Creating a second workspace must not touch an existing root CLAUDE.md.
+	if err := os.WriteFile(filepath.Join(root, "CLAUDE.md"), []byte("custom"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Create(root, "another topic", now); err != nil {
+		t.Fatal(err)
+	}
+	rootClaude, err = os.ReadFile(filepath.Join(root, "CLAUDE.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(rootClaude) != "custom" {
+		t.Errorf("root CLAUDE.md was overwritten: got %q", rootClaude)
+	}
+}
+
+func TestCreate_EmptyTopic(t *testing.T) {
+	root := t.TempDir()
+	if _, err := Create(root, "   ", time.Now()); !errors.Is(err, ErrEmptyTopic) {
+		t.Errorf("Create with blank topic: err = %v, want ErrEmptyTopic", err)
+	}
+}
+
+func containsLine(s, line string) bool {
+	for _, l := range strings.Split(s, "\n") {
+		if strings.TrimRight(l, "\r") == line {
+			return true
 		}
 	}
+	return false
 }
 
-func TestCategoriesReplacesBase(t *testing.T) {
-	// a config-provided base replaces the defaults wholesale, in order, and
-	// on-disk extras still get appended (sorted) after it.
-	ps := []Project{{Category: "zeta"}, {Category: "alpha"}}
-	cats := Categories([]string{"foo", "bar", "foo"}, ps)
-	want := []string{"foo", "bar", "alpha", "zeta"}
-	if len(cats) != len(want) {
-		t.Fatalf("cats = %v, want %v", cats, want)
+func TestResolve_ExactMatch(t *testing.T) {
+	root := t.TempDir()
+	now := time.Date(2026, 8, 8, 0, 0, 0, 0, time.UTC)
+	created, err := Create(root, "Datadog Cost", now)
+	if err != nil {
+		t.Fatal(err)
 	}
-	for i := range want {
-		if cats[i] != want[i] {
-			t.Errorf("cats[%d] = %q, want %q (full %v)", i, cats[i], want[i], cats)
+	// A second, older workspace with a different topic so it can't accidentally match.
+	if _, err := Create(root, "Team Structure", now.AddDate(0, 0, -2)); err != nil {
+		t.Fatal(err)
+	}
+
+	matches, wasCreated, err := Resolve(root, "Datadog Cost")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wasCreated {
+		t.Error("exact match should not create a new workspace")
+	}
+	if len(matches) != 1 || matches[0].Path != created.Path {
+		t.Errorf("matches = %+v, want exactly %+v", matches, created)
+	}
+}
+
+func TestResolve_PartialMatchSingle(t *testing.T) {
+	root := t.TempDir()
+	now := time.Now()
+	created, err := Create(root, "datadog-cost-reduction", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	matches, wasCreated, err := Resolve(root, "datadog")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wasCreated {
+		t.Error("partial match should not create a new workspace")
+	}
+	if len(matches) != 1 || matches[0].Path != created.Path {
+		t.Errorf("matches = %+v, want exactly %+v", matches, created)
+	}
+}
+
+func TestResolve_PartialMatchMultiple(t *testing.T) {
+	root := t.TempDir()
+	now := time.Now()
+	if _, err := Create(root, "datadog-cost", now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Create(root, "datadog-alerts", now.AddDate(0, 0, -1)); err != nil {
+		t.Fatal(err)
+	}
+
+	matches, wasCreated, err := Resolve(root, "datadog")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wasCreated {
+		t.Error("multiple partial matches should not create a new workspace")
+	}
+	if len(matches) != 2 {
+		t.Fatalf("matches = %+v, want 2 results", matches)
+	}
+}
+
+func TestResolve_NoMatchCreates(t *testing.T) {
+	root := t.TempDir()
+
+	matches, wasCreated, err := Resolve(root, "brand new topic")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !wasCreated {
+		t.Error("no match should create a new workspace")
+	}
+	if len(matches) != 1 {
+		t.Fatalf("matches = %+v, want exactly 1", matches)
+	}
+	if _, err := os.Stat(matches[0].Path); err != nil {
+		t.Errorf("Resolve reported creation but the directory is missing: %v", err)
+	}
+}
+
+func TestResolve_EmptySlug(t *testing.T) {
+	root := t.TempDir()
+	if _, _, err := Resolve(root, "   !!!   "); !errors.Is(err, ErrEmptyTopic) {
+		t.Errorf("Resolve with an unslugifiable topic: err = %v, want ErrEmptyTopic", err)
+	}
+}
+
+func TestResolve_AbsolutePath(t *testing.T) {
+	root := t.TempDir()
+	now := time.Now()
+	created, err := Create(root, "datadog-cost", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("existing", func(t *testing.T) {
+		matches, wasCreated, err := Resolve(root, created.Path)
+		if err != nil {
+			t.Fatal(err)
 		}
-	}
+		if wasCreated {
+			t.Error("resolving an existing absolute path should not create anything")
+		}
+		if len(matches) != 1 || matches[0].Path != created.Path {
+			t.Errorf("matches = %+v, want exactly %+v", matches, created)
+		}
+	})
+
+	t.Run("nonexistent", func(t *testing.T) {
+		bogus := filepath.Join(root, "2099-01-01-does-not-exist")
+		_, _, err := Resolve(root, bogus)
+		if !errors.Is(err, ErrNotFound) {
+			t.Errorf("Resolve(%q): err = %v, want ErrNotFound", bogus, err)
+		}
+		if _, statErr := os.Stat(bogus); statErr == nil {
+			t.Error("Resolve must not create a directory for an unresolved absolute path")
+		}
+	})
 }

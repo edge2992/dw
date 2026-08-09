@@ -1,33 +1,28 @@
-# dw — discussion workspace picker
+# dw — discussion workspace
 
 [![release](https://img.shields.io/github/v/release/edge2992/dw)](https://github.com/edge2992/dw/releases/latest)
 [![license](https://img.shields.io/github/license/edge2992/dw)](LICENSE)
 
-**Spin up a dated workspace for every topic you explore with Claude — then fuzzy-jump back to any of them.**
-
-`dw` gives each topic its own `<category>/<YYYY-MM-DD>-<topic>/` folder with a
-frontmatter README. No naming ceremony: type a topic, pick a category, and start
-working. Later, fuzzy-find it and `cd` straight in.
+**Give every topic you discuss with Claude its own directory, and carry the state of that discussion — not the conversation log — from one session to the next.**
 
 ```text
-$ dw
-> k8s pod                                         research/2026-06-14-k8s-pod-oom
-  db outage                                       incident/2026-06-01-db-outage
-  + create: 2026-06-17-k8s-pod                    (pick a category)
-    status: active  tags: [gpu, linux]  created: 2026-06-14
+$ dw datadog-cost
+/Users/me/dw/2026-08-08-datadog-cost	* Datadog コスト削減	Flex Logs の料金は営業確認待ち
+$ cd /Users/me/dw/2026-08-08-datadog-cost && claude
 ```
 
-## Features
+## Why
 
-- **Dated auto-layout** — every topic gets its own `<category>/<YYYY-MM-DD>-<topic>/` folder with a frontmatter README, created for you.
-- **Create on demand** — type the topic first, pick a category (or invent one) second. No `create` command, no naming ceremony.
-- **Fuzzy jump & resume** — fuzzy-match across names and titles, newest first; your last workspace is pinned to the top, and `dw -` returns to it with no UI.
-- **Frontmatter-aware** — shows `status` / `tags` / `created` from each README under the selection.
-- **Claude-ready** — every workspace also gets a `CLAUDE.md`, three lines of guidance tuned to its category (`research` and `incident` call for different habits). Override it per category like any template; `dw scaffold` backfills older workspaces.
-- **Picks up where you left off** — each workspace carries its own `.claude/` config: a `Stop` hook checkpoints the session into `.dw/last-session.md`, and a project rule tells the next session to read it. Scoped to the workspace, so your other repos are untouched.
-- **Scriptable primitives** — the TUI is sugar over plain commands: `dw new` creates, `dw list --json` streams, so you can wire your own flow (`dw list --json | fzf`).
-- **Unicode-safe slugs** — Japanese and other scripts survive slugification (`機械学習 調査` → `機械学習-調査`).
-- **Zero-config, YAML when you want it** — works out of the box at `~/dw`; customize root, templates, and categories in `~/.config/dw/config.yml` ([docs](docs/configuration.md)).
+A conversation ends and the log is gone the next time you start one — Claude has no memory of what you decided, what you ruled out, or what's still open. Summarizing the log doesn't fix this either: a summary degrades every time it's re-summarized, and it carries the previous session's framing along with it.
+
+`dw` takes a different approach: instead of carrying the conversation forward, it carries a single document — `STATE.md` — that records what's actually known about a topic (premises, rejected options, open questions), written by you and updated by you. Nothing else about the session persists, and nothing needs to. See [docs/concepts.md](docs/concepts.md) for the reasoning in full; this README covers the tool.
+
+- **One command, one directory** — `dw <topic>` resolves to `<root>/<YYYY-MM-DD>-<topic>/`: exact match, else partial match(es), else it creates one. No separate create command.
+- **State, not conversation log** — a new workspace gets one file, `STATE.md`. That's what carries forward across sessions.
+- **A single Convention layer** — the workspace root gets exactly one `CLAUDE.md`, written once and never touched again by `dw`. It tells Claude how to treat `STATE.md`, not what any particular topic is about.
+- **Ambiguity goes to `fzf`, not to `dw`** — when a topic matches more than one workspace, `dw` prints every match; it never guesses which one you meant.
+- **Resume by default** — your last-visited workspace is pinned to the top of the listing, so `dw` with no arguments and `enter` gets you back to where you left off.
+- **Zero config, zero dependencies** — one environment variable (`DW_ROOT`), no YAML, and the Go standard library only.
 
 ## Install
 
@@ -40,123 +35,78 @@ Don't use Go? Grab a prebuilt binary for your OS/arch from the
 windows × amd64 / arm64, with `checksums.txt`). Check the installed version with
 `dw version`.
 
-## Shell integration
+## Usage
 
-`dw` is a child process, so it cannot change your shell's working directory itself.
-Instead it prints the chosen path to **stdout**, and a thin wrapper function does the
-`cd`. The path-producing subcommands (the picker, `dw -`, `dw new`) are captured and
-`cd`'d into; the others (`list`, `root`, …) pass straight through so their output
-shows up as usual.
+### Shell integration
 
-Let `dw` generate the wrapper for you — add this to your `~/.zshrc` (or `~/.bashrc`):
+`dw` is a child process, so it can't change your shell's working directory itself, and it doesn't know about `fzf`. Both jobs — disambiguating multiple matches and `cd`ing — belong to a thin shell wrapper that `dw init` prints for you:
 
 ```zsh
-eval "$(dw init zsh)"   # use `dw init bash` for bash
+eval "$(dw init zsh)"   # or: dw init bash
 ```
 
-`dw init` prints the function below; eval'ing it keeps the integration in sync with
-the binary, so there's nothing to hand-copy:
+That wrapper:
 
-```zsh
-dw() {
-  case "${1:-}" in
-    ''|-|new)
-      local dir
-      dir="$(command dw "$@")" && [ -n "$dir" ] && cd "$dir" ;;
-    *)
-      command dw "$@" ;;
-  esac
-}
-```
+1. Runs `command dw "$@"` and captures the TSV rows.
+2. If there's more than one row, hands them to `fzf` (`--with-nth=2..` hides the path column, the preview shows `STATE.md`) — or, without `fzf` on `PATH`, just prints the rows and stops.
+3. Re-resolves the chosen absolute path through `command dw` (so it becomes the new "last visited" workspace) and `cd`'s into it.
 
-Want to land in the workspace and launch Claude in one go? Add a second wrapper:
+`fzf` is optional but the point of the tool without it: install it (`brew install fzf`) to get the picker experience; without it `dw` still works from the command line, just without disambiguation.
 
-```zsh
-function dwc() {
-  case "${1:-}" in
-    ''|-|new)
-      local dir
-      dir="$(command dw "$@")" && [ -n "$dir" ] && cd "$dir" && claude ;;
-    *)
-      command dw "$@" ;;
-  esac
-}
-```
-
-## Quickstart
+### Quickstart
 
 ```sh
-dw                              # open the picker: fuzzy-find, or type a new topic to create one
-dw -                           # jump straight back to your last workspace
-dw new "my topic" -c research  # create a workspace non-interactively and cd in
-dw list                        # print every workspace as category/name
-dw root                        # print the workspace root
+dw datadog-cost        # exact/partial match jumps in; no match creates it
+dw                      # list every workspace, most recently visited pinned first
 ```
 
-Prefer to compose your own picker? The interactive TUI is just sugar over the
-primitives — wire `dw list` to your favourite fuzzy finder instead:
+Both forms print the same tab-separated contract to stdout:
 
-```sh
-cd "$(dw list --json | jq -r '.[].path' | fzf)"
+```
+<absolute path>\t<marker + title>\t<first open question>
 ```
 
-In the picker:
+- Column 1: absolute path (hidden by the fzf wrapper, useful for scripting: `cut -f1`).
+- Column 2: `* ` prefix for the pinned/last-visited workspace, `  ` otherwise, then the title (`STATE.md`'s first `# ` heading, or the topic slug if there's no `STATE.md` yet).
+- Column 3: the first line under `## 未決の問い` (open questions) in `STATE.md` — empty if there isn't one.
 
-- Type to filter, `enter` to `cd` into the highlighted workspace.
-- No match? A `+ create: <date>-<slug>` row appears → `enter` → **pick a category** → it's created and you `cd` in.
-- At the category step, type an unknown name to spin up a **new category**; `esc` goes **back** to browse so you can retype the topic.
-- `↑/↓` (or `ctrl+p` / `ctrl+n`) to move; `esc` / `ctrl+c` to abort.
-
-## Commands
+Everything goes to **stdout**; diagnostics go to stderr. `dw` never asks for confirmation and never launches `claude` itself — it only ever prints paths.
 
 | Command | Description |
 |---|---|
-| `dw` | Open the interactive picker (fuzzy list + create-on-demand). |
-| `dw -` | Jump to the last workspace; prints its path. |
-| `dw new <topic> -c <cat>` | Create a workspace non-interactively; prints its path. |
-| `dw list` | List workspaces as `category/name`, one per line. |
-| `dw list --json` | List workspaces as a JSON array (includes absolute `path`). |
-| `dw scaffold [-c <cat>]` | Write the missing `CLAUDE.md` and `.claude/` files into existing workspaces; `--dry-run` to preview. |
-| `dw root` | Print the resolved workspace root. |
-| `dw config path` | Print the resolved config file path. |
-| `dw config init` | Write a starter `config.yml` (won't overwrite an existing one). |
-| `dw init <zsh\|bash>` | Print the shell wrapper to `eval` (see Shell integration). |
+| `dw` | List every workspace as TSV, most recently visited pinned first. |
+| `dw <topic>` | Resolve `<topic>`: exact match, else partial match(es), else create it. |
+| `dw init <zsh\|bash>` | Print the shell function that wires `dw` into `fzf` and `cd`. |
 | `dw version` | Print the version. |
-| `dw help` / `-h` | Show usage. |
+| `dw help` | Show usage, including the resolved `DW_ROOT`. |
 
-Every path-producing command writes to **stdout**; diagnostics go to stderr. That's
-what makes the `dw()` wrapper and pipelines like `dw list | fzf` work.
-
-## Layout
+### What `dw` creates
 
 ```text
-<root>/<category>/<YYYY-MM-DD>-<topic-slug>/
-  README.md                     # frontmatter-indexed entry point
-  CLAUDE.md                     # how to work in this topic, per category
-  .claude/
-    settings.json               # enables the Stop hook, in this workspace only
-    rules/dw-workspace.md       # tells Claude to read the checkpoint on startup
-    hooks/checkpoint.sh         # writes the checkpoint at the end of each turn
-  .dw/last-session.md           # the checkpoint (written by the hook, not by dw)
+<root>/CLAUDE.md                     # Convention — written once, yours from then on
+<root>/<YYYY-MM-DD>-<topic-slug>/
+  STATE.md                           # State — what's known about this topic
+  sources/                           # Sources — collected material (create as needed)
+  work/                              # Working area — disposable, not carried forward (create as needed)
 ```
 
-`<root>` defaults to `~/dw` (configurable). Categories are arbitrary folders; the
-defaults offered when empty are `research`, `incident`, `discussion`, `scratch`.
+Four layers, described fully in [docs/concepts.md](docs/concepts.md): **Sources** (read-only material collected for the topic), **State** (`STATE.md`, the only layer that survives across sessions — Claude proposes edits as a diff, never writes it directly), **Working area** (`work/`, disposable generated output), and **Convention** (`<root>/CLAUDE.md`, shared by every topic). `sources/` and `work/` aren't scaffolded — create them by hand once a topic actually needs them.
 
-`README.md` and `CLAUDE.md` are yours to edit and to override per category. The
-`.claude/` files are dw's plumbing: fixed contents, never templated — but never
-overwritten either, so an edited one stays edited.
-[Details](docs/configuration.md#claude-code-integration-claude).
+### A note on `CLAUDE.md` and long sessions
+
+Claude Code loads `CLAUDE.md` files by walking up the directory tree from the working directory, so running `claude` inside `<root>/<topic>/` loads `<root>/CLAUDE.md` in full at launch. What isn't documented is whether that ancestor file is *re-injected* after `/compact` the way the project-root `CLAUDE.md` is — so on a very long session, the convention may fade before `STATE.md`'s content does. If you notice Claude drifting from the convention late in a long session, that's the likely cause; re-reading `<root>/CLAUDE.md` explicitly is the workaround.
 
 ## Configuration
 
-`dw` runs with zero config — it defaults to `~/dw` and a built-in category set.
-To relocate the workspace root, customize templates, or redefine categories, run
-`dw config init` and edit `~/.config/dw/config.yml`.
+`DW_ROOT` is the only knob — there is no config file. Defaults to `~/dw`:
 
-→ Full reference: **[docs/configuration.md](docs/configuration.md)**
+```sh
+export DW_ROOT=~/discussions
+```
 
-## Development
+Every path `dw` prints is absolute — `Root()` normalizes `DW_ROOT` against the current directory if it isn't already absolute. Still, set it to something that's absolute up front (`~/discussions`, which your shell expands before `dw` ever sees it, or `$HOME/discussions`), not a bare relative path like `discussions`: since the wrapper `cd`s you into a resolved workspace, running `dw` again from inside one would re-resolve a relative `DW_ROOT` under that workspace instead of your intended root.
+
+## Contributing
 
 ```sh
 make fmt    # gofumpt + goimports (golangci-lint fmt)
@@ -165,18 +115,31 @@ make test   # go test -race ./...
 make        # all of the above
 ```
 
+Building from source needs the Go version pinned in `go.mod` (currently 1.26). The binary itself has no runtime dependencies — no cgo, no external files (the shell wrapper is embedded as a Go string, see below) — so cross-compilation just works, which is how [Releases](https://github.com/edge2992/dw/releases/latest) ships linux/macOS/windows × amd64/arm64 from one `.goreleaser.yaml` config.
+
+Two portability notes if you're changing shell-facing behavior:
+
+- The `dw init` wrapper targets POSIX-compatible `zsh`/`bash` only (`dw init fish` or anything else is a usage error); Windows users get a binary but no wrapper.
+- The "last visited" cache path comes from `os.UserCacheDir()`, which differs by OS (`~/.cache/dw/last` on Linux, `~/Library/Caches/dw/last` on macOS) — never hardcode it.
+
+Other project mechanics:
+
 - **Lint/Format**: golangci-lint v2 (config `.golangci.yml`, standard set + misspell/revive; formatters gofumpt/goimports).
 - **Hooks**: pre-commit framework (`.pre-commit-config.yaml`). A global pre-commit hook delegates here after gitleaks, so `pre-commit install` is not required. Setup: `uv tool install pre-commit`, `brew install golangci-lint`.
 - **CI**: GitHub Actions (`.github/workflows/ci.yml`) runs build / test -race / golangci-lint.
+- **Release**: fully automated. [Release Please](https://github.com/googleapis/release-please) parses [Conventional Commits](https://www.conventionalcommits.org/) on every push to `main` to maintain a release PR; merging it tags the release, and [GoReleaser](https://goreleaser.com/) attaches the binaries. `feat` bumps the minor, `fix` the patch, `feat!`/`fix!` (or a `BREAKING CHANGE:` footer) bumps the major — so a commit's type is also a release decision, not just a label.
 
-## Release
+There's no separate `CONTRIBUTING.md`; open a PR or issue against this repo.
 
-Versioning is automated. [Release Please](https://github.com/googleapis/release-please)
-parses [Conventional Commits](https://www.conventionalcommits.org/) to decide the next
-version: every push to `main` updates a **release PR** (with CHANGELOG), and merging it
-creates the semver tag and GitHub Release. [GoReleaser](https://goreleaser.com/) then
-attaches prebuilt binaries for each OS/arch (`.github/workflows/release.yml`). `feat`
-bumps the minor, `fix` the patch.
+## Reading the source
+
+`dw` is small on purpose (see [Why](#why)) — the whole implementation is `main.go` plus `internal/workspace/`. A few things that aren't obvious from the file names alone:
+
+- **`internal/workspace/`** holds all of the logic: `workspace.go` (`Scan`/`Resolve`/`Create`, the topic-resolution algorithm), `state.go` (`STATE.md` templating and parsing), `convention.go` (writes the root `CLAUDE.md` once), and `last.go` (the "last visited" cache). `main.go` is just argv dispatch and output formatting on top of that package.
+- **Two files are both named `CLAUDE.md` and mean different things.** `/CLAUDE.md` (repo root) is this repository's *own* development guidance — instructions for working on dw's Go source. `internal/workspace/assets/CLAUDE.md` is a template, `//go:embed`ded into the binary, that `dw` writes once into every `<DW_ROOT>/CLAUDE.md` it creates (the Convention layer described above). They're unrelated; don't edit one expecting it to affect the other.
+- **`main.go`'s `shellInit` constant** *is* the `dw init zsh`/`dw init bash` output — the wrapper script lives inline as a Go string rather than a separate `.sh` file, which is also why the binary has no runtime file dependencies (see Contributing).
+- **`.golangci.yml`, `.pre-commit-config.yaml`, `.goreleaser.yaml`, `release-please-config.json`** are tooling configuration, not part of the `dw` package — see Contributing for what each one does.
+- **`docs/concepts.md`** is the design document this tool implements; read it if `STATE.md`'s shape (前提 / 却下した案 / 未決の問い) or the four-layer split needs more context than this README gives.
 
 ## License
 
