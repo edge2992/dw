@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.1.0](https://github.com/edge2992/dw/compare/v1.0.0...v1.1.0) (2026-08-09)
+
+
+### Features
+
+* always open the picker and create typed-but-unmatched topics ([14e55ed](https://github.com/edge2992/dw/commit/14e55ed4bcb3f57612073eedbc73d2fc6cffa08d))
+* always open the picker and create typed-but-unmatched topics ([85de2b2](https://github.com/edge2992/dw/commit/85de2b2c13ecfe4020587f89614161ff77c440f8))
+
 ## [1.0.0](https://github.com/edge2992/dw/compare/v0.7.0...v1.0.0) (2026-08-09)
 
 
