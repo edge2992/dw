@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.0.0](https://github.com/edge2992/dw/compare/v0.7.0...v1.0.0) (2026-08-09)
+
+
+### ⚠ BREAKING CHANGES
+
+* every subcommand and the on-disk layout changed. There is no migration path or compatibility shim; existing ~/dw workspaces are not recognized by the new binary.
+
+### Features
+
+* rebuild dw around STATE.md and a single root CLAUDE.md ([3d6130b](https://github.com/edge2992/dw/commit/3d6130b29d952c8c699d2f1ae2e093a64459b410))
+
+
+### Bug Fixes
+
+* normalize DW_ROOT and stop capping STATE.md scans ([d1b83eb](https://github.com/edge2992/dw/commit/d1b83eb2537ab20c2e0d0f93ad7c2aec75d6fe8d))
+
 ## [0.7.0](https://github.com/edge2992/dw/compare/v0.6.0...v0.7.0) (2026-08-03)
 
 
