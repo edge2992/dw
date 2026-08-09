@@ -134,11 +134,20 @@ func firstUnresolvedLine(lines []string) string {
 
 // TSVRow formats p as one line of dw's stdout contract:
 //
-//	<absolute path>\t<marker + title>\t<first open question>
+//	<absolute path>\t<marker + title>\t<first open question>\t<directory name>
 //
 // last is the currently pinned path (LastPath()); when it equals p.Path the
 // marker is "* ", otherwise two spaces. No column-width alignment is done —
 // callers get raw TSV and are expected to consume it as such (e.g. fzf).
+//
+// The directory name is repeated in the last column even though it is already
+// the basename of the first one, because fzf cannot search a field it does not
+// display: the wrapper hides column 1 with --with-nth=2.., which takes the
+// path out of the search scope as well. Without a visible copy, a workspace
+// whose STATE.md title has been rewritten (the expected workflow) could not be
+// found by its slug or its date — and fzf reporting "no match" is what makes
+// the wrapper offer to create a new topic, so the picker would be inviting
+// duplicates of workspaces that already exist.
 func (p Project) TSVRow(last string) string {
 	info := readState(p.Path)
 	title := info.title
@@ -149,7 +158,7 @@ func (p Project) TSVRow(last string) string {
 	if last != "" && last == p.Path {
 		marker = "* "
 	}
-	return p.Path + "\t" + marker + title + "\t" + info.unresolved
+	return p.Path + "\t" + marker + title + "\t" + info.unresolved + "\t" + p.Name
 }
 
 // PinLast moves the project whose Path equals last to the front of ps,

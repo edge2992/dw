@@ -129,21 +129,42 @@ func TestTSVRow(t *testing.T) {
 	p := Project{Name: "2026-08-08-my-topic", Topic: "my-topic", Date: "2026-08-08", Path: dir}
 
 	row := p.TSVRow("")
-	want := dir + "\t  My Topic\tsome open question"
+	want := dir + "\t  My Topic\tsome open question\t2026-08-08-my-topic"
 	if row != want {
 		t.Errorf("TSVRow(\"\") = %q, want %q", row, want)
 	}
 
 	row = p.TSVRow(dir)
-	want = dir + "\t* My Topic\tsome open question"
+	want = dir + "\t* My Topic\tsome open question\t2026-08-08-my-topic"
 	if row != want {
 		t.Errorf("TSVRow(last=path) = %q, want %q", row, want)
 	}
 
 	row = p.TSVRow("/some/other/path")
-	want = dir + "\t  My Topic\tsome open question"
+	want = dir + "\t  My Topic\tsome open question\t2026-08-08-my-topic"
 	if row != want {
 		t.Errorf("TSVRow(last=other) = %q, want %q", row, want)
+	}
+}
+
+// TestTSVRow_NameStaysSearchableWhenTitleDiverges guards the reason column 4
+// exists: once a workspace's STATE.md title no longer resembles its directory
+// name, the name column is the only thing left in fzf's search scope that
+// still carries the slug and the date.
+func TestTSVRow_NameStaysSearchableWhenTitleDiverges(t *testing.T) {
+	dir := t.TempDir()
+	writeState(t, dir, "# Datadog コスト削減\n")
+	p := Project{Name: "2026-08-08-datadog-cost", Topic: "datadog-cost", Date: "2026-08-08", Path: dir}
+
+	cols := strings.Split(p.TSVRow(""), "\t")
+	if len(cols) != 4 {
+		t.Fatalf("TSVRow produced %d columns, want 4", len(cols))
+	}
+	if cols[3] != p.Name {
+		t.Errorf("column 4 = %q, want the directory name %q", cols[3], p.Name)
+	}
+	if strings.Contains(cols[1], "datadog-cost") {
+		t.Fatal("this test is vacuous unless the title column has diverged from the slug")
 	}
 }
 
@@ -151,7 +172,7 @@ func TestTSVRow_FallsBackToTopic(t *testing.T) {
 	dir := t.TempDir() // no STATE.md at all
 	p := Project{Name: "2026-08-08-my-topic", Topic: "my-topic", Date: "2026-08-08", Path: dir}
 	row := p.TSVRow("")
-	want := dir + "\t  my-topic\t"
+	want := dir + "\t  my-topic\t\t2026-08-08-my-topic"
 	if row != want {
 		t.Errorf("TSVRow with no STATE.md = %q, want %q", row, want)
 	}
