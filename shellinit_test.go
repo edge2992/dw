@@ -353,6 +353,21 @@ func TestPick_PassesArgumentsAsQuery(t *testing.T) {
 	}
 }
 
+// TestShellInit_PlumbingPassesThrough: the plumbing commands are reserved
+// words, so the wrapper must hand them to `command dw` instead of the picker.
+func TestShellInit_PlumbingPassesThrough(t *testing.T) {
+	eachShell(t, func(t *testing.T, shell string) {
+		env := buildEnv(t)
+		env.run(t, shell, `printf '{}' | dw hook; dw summarize --session x </dev/null; true`)
+		if got := env.fzfCalls(t); got != 0 {
+			t.Errorf("fzf ran %d times for plumbing commands, want 0", got)
+		}
+		if dirs := env.dirs(t); len(dirs) != 0 {
+			t.Errorf("plumbing created workspaces %v", dirs)
+		}
+	})
+}
+
 // TestShellInit_ParsesInBothShells is the cheap backstop: the wrapper is a Go
 // string constant, so nothing else would catch a syntax error in it.
 func TestShellInit_ParsesInBothShells(t *testing.T) {

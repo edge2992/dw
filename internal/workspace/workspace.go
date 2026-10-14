@@ -35,8 +35,7 @@ var ErrEmptyTopic = errors.New("topic has no letters or digits to slug")
 // an arbitrary absolute path, so this is the terminal outcome for that case.
 var ErrNotFound = errors.New("no workspace found at that path")
 
-// Root returns the workspace root: $DW_ROOT if set, else ~/dw. There is no
-// config file — this environment variable is the only knob.
+// Root returns the workspace root: $DW_ROOT if set, else ~/dw.
 //
 // The result is always made absolute. Every path dw prints is documented as
 // absolute (see the TSV contract in main.go), and a relative DW_ROOT would
@@ -124,8 +123,9 @@ func sortProjects(ps []Project) {
 }
 
 // Create scaffolds a new workspace <root>/<date>-<slug>/STATE.md for
-// rawTopic, and writes the root CLAUDE.md convention file too if root doesn't
-// have one yet (see convention.go). rawTopic is only trimmed, not slugified,
+// rawTopic, plus its .claude/settings.json Stop hook (see EnsureScaffold), and
+// writes the root CLAUDE.md convention file too if root doesn't have one yet
+// (see convention.go). rawTopic is only trimmed, not slugified,
 // before it becomes the STATE.md title — the slug is just the directory name.
 // now supplies the date so callers/tests stay deterministic.
 func Create(root, rawTopic string, now time.Time) (Project, error) {
@@ -146,7 +146,33 @@ func Create(root, rawTopic string, now time.Time) (Project, error) {
 	if err := writeConventionIfAbsent(root); err != nil {
 		return Project{}, err
 	}
+	if err := EnsureScaffold(path); err != nil {
+		return Project{}, err
+	}
 	return parseProject(name, path), nil
+}
+
+// IsWorkspace reports whether dir is a workspace under root: an existing,
+// non-dot directory directly under it — the same rule Scan lists by.
+// Symlinks are resolved on both sides, since Claude Code reports the real
+// path while DW_ROOT may point through a link (macOS /tmp, for one).
+func IsWorkspace(root, dir string) bool {
+	if dir == "" || !filepath.IsAbs(dir) {
+		return false
+	}
+	root, dir = realPath(root), realPath(dir)
+	if filepath.Dir(dir) != root || strings.HasPrefix(filepath.Base(dir), ".") {
+		return false
+	}
+	fi, err := os.Stat(dir)
+	return err == nil && fi.IsDir()
+}
+
+func realPath(p string) string {
+	if r, err := filepath.EvalSymlinks(p); err == nil {
+		return r
+	}
+	return filepath.Clean(p)
 }
 
 // Resolve finds the workspace(s) under root matching arg, creating one when
@@ -206,8 +232,9 @@ func Resolve(root, arg string) (matches []Project, created bool, err error) {
 }
 
 // writeIfAbsent writes content to path unless the file already exists, and
-// reports whether it wrote. Every write in this package goes through here so
-// a workspace is never silently clobbered.
+// reports whether it wrote. Creation in this package goes through here so a
+// workspace is never silently clobbered; the only overwrites are the
+// hash-checked WriteStateAtomic and EnsureScaffold refreshing its own file.
 func writeIfAbsent(path, content string, mode os.FileMode) (bool, error) {
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
 	if os.IsExist(err) {
