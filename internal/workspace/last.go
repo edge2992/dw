@@ -6,15 +6,21 @@ import (
 	"strings"
 )
 
-// statePath returns the file dw uses to remember the last chosen workspace
-// (e.g. ~/.cache/dw/last on Linux, ~/Library/Caches/dw/last on macOS).
-func statePath() string {
+// CacheDir returns dw's private cache directory (e.g. ~/.cache/dw on Linux,
+// ~/Library/Caches/dw on macOS). Everything dw remembers outside a workspace
+// lives here, so nothing it keeps becomes context a session might read.
+func CacheDir() string {
 	dir, err := os.UserCacheDir()
 	if err != nil {
 		home, _ := os.UserHomeDir()
 		dir = filepath.Join(home, ".cache")
 	}
-	return filepath.Join(dir, "dw", "last")
+	return filepath.Join(dir, "dw")
+}
+
+// statePath returns the file dw uses to remember the last chosen workspace.
+func statePath() string {
+	return filepath.Join(CacheDir(), "last")
 }
 
 // LastPath returns the most recently chosen workspace path, or "" if there is

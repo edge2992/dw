@@ -2,6 +2,8 @@ package workspace
 
 import (
 	"bufio"
+	"crypto/sha256"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -43,6 +45,112 @@ func renderState(title string) string {
 type stateInfo struct {
 	title      string // first "# " heading; "" if none
 	unresolved string // first non-empty, non-comment line under unresolvedHeading; "" if none
+}
+
+// ErrStateChanged is returned by WriteStateAtomic when STATE.md no longer
+// matches the hash the caller read it with: someone else wrote it meanwhile.
+var ErrStateChanged = errors.New("STATE.md changed since it was read")
+
+// ReadStateFile returns dir/STATE.md and its sha256, the token
+// WriteStateAtomic later checks against.
+func ReadStateFile(dir string) (string, [32]byte, error) {
+	b, err := os.ReadFile(filepath.Join(dir, stateFileName))
+	if err != nil {
+		return "", [32]byte{}, err
+	}
+	return string(b), sha256.Sum256(b), nil
+}
+
+// WriteStateAtomic replaces dir/STATE.md with content, but only if the file
+// still hashes to expect (compare-and-swap); otherwise it returns
+// ErrStateChanged and leaves the file alone. The new content is written to a
+// temp file in the same directory and renamed over STATE.md, so a reader sees
+// either the old file or the new one, never half of each. The window between
+// the hash check and the rename is a few milliseconds; an editor save landing
+// exactly there is lost, which the rolling backups cover.
+func WriteStateAtomic(dir, content string, expect [32]byte) (err error) {
+	path := filepath.Join(dir, stateFileName)
+	cur, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	if sha256.Sum256(cur) != expect {
+		return ErrStateChanged
+	}
+	fi, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+
+	tmp, err := os.CreateTemp(dir, ".STATE.md.tmp-*")
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			_ = os.Remove(tmp.Name())
+		}
+	}()
+	if _, err = tmp.WriteString(content); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err = tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err = tmp.Close(); err != nil {
+		return err
+	}
+	if err = os.Chmod(tmp.Name(), fi.Mode().Perm()); err != nil {
+		return err
+	}
+	if err = os.Rename(tmp.Name(), path); err != nil {
+		return err
+	}
+	if d, derr := os.Open(dir); derr == nil { // best effort: persist the rename itself
+		_ = d.Sync()
+		_ = d.Close()
+	}
+	return nil
+}
+
+// Title returns the first "# " heading of a STATE.md body, or "".
+func Title(content string) string {
+	return firstHeading(skipFrontmatter(splitLines(content)))
+}
+
+// OpenQuestions returns every non-empty, non-comment line in the
+// "## 未決の問い" section of a STATE.md body, and whether the section exists.
+func OpenQuestions(content string) (lines []string, found bool) {
+	return openQuestions(skipFrontmatter(splitLines(content)))
+}
+
+// openQuestions scans the unresolvedHeading section, stopping at the next
+// heading. Blank lines and "<!--" comment lines are skipped.
+func openQuestions(all []string) (lines []string, found bool) {
+	for _, line := range all {
+		t := strings.TrimSpace(line)
+		if !found {
+			found = t == unresolvedHeading
+			continue
+		}
+		switch {
+		case strings.HasPrefix(t, "#"):
+			return lines, true
+		case t != "" && !strings.HasPrefix(t, "<!--"):
+			lines = append(lines, t)
+		}
+	}
+	return lines, found
+}
+
+func splitLines(content string) []string {
+	lines := strings.Split(content, "\n")
+	for i, l := range lines {
+		lines[i] = strings.TrimRight(l, "\r")
+	}
+	return lines
 }
 
 // readState extracts stateInfo from dir/STATE.md. Every failure mode —
@@ -109,25 +217,8 @@ func firstHeading(lines []string) string {
 // unresolvedHeading, stopping at the next heading. Returns "" when the
 // heading is absent, the section is empty, or it holds only a "<!--" comment.
 func firstUnresolvedLine(lines []string) string {
-	in := false
-	for _, line := range lines {
-		t := strings.TrimSpace(line)
-		if !in {
-			if t == unresolvedHeading {
-				in = true
-			}
-			continue
-		}
-		switch {
-		case t == "":
-			continue
-		case strings.HasPrefix(t, "<!--"):
-			continue
-		case strings.HasPrefix(t, "#"):
-			return "" // next heading reached: section had no content
-		default:
-			return t
-		}
+	if qs, _ := openQuestions(lines); len(qs) > 0 {
+		return qs[0]
 	}
 	return ""
 }

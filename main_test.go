@@ -18,13 +18,26 @@ func setup(t *testing.T) string {
 	t.Setenv("DW_ROOT", root)
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CACHE_HOME", "")
+	t.Setenv("XDG_CONFIG_HOME", "")
+	for _, k := range []string{
+		"DW_CONFIG", "DW_SUMMARY_BACKEND", "DW_LLM_BASE_URL", "DW_LLM_API_KEY", "DW_LLM_MODEL",
+		"DW_CLAUDE_COMMAND", "DW_CLAUDE_MODEL", "DW_SUMMARY_TIMEOUT", "DW_SUMMARY_MAX_INPUT",
+		"DW_SUMMARY_DEBOUNCE", "DW_SUMMARIZER", "CLAUDE_PROJECT_DIR",
+	} {
+		t.Setenv(k, "")
+	}
 	return root
 }
 
 func runCmd(t *testing.T, args ...string) (stdout, stderr string, code int) {
 	t.Helper()
+	return runWithStdin(t, "", args...)
+}
+
+func runWithStdin(t *testing.T, stdin string, args ...string) (stdout, stderr string, code int) {
+	t.Helper()
 	var out, errBuf bytes.Buffer
-	code = run(append([]string{"dw"}, args...), &out, &errBuf)
+	code = run(append([]string{"dw"}, args...), strings.NewReader(stdin), &out, &errBuf)
 	return out.String(), errBuf.String(), code
 }
 

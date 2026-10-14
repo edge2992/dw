@@ -15,7 +15,7 @@ $ cd /Users/me/dw/2026-08-08-datadog-cost && claude
 
 A conversation ends and the log is gone the next time you start one — Claude has no memory of what you decided, what you ruled out, or what's still open. Summarizing the log doesn't fix this either: a summary degrades every time it's re-summarized, and it carries the previous session's framing along with it.
 
-`dw` takes a different approach: instead of carrying the conversation forward, it carries a single document — `STATE.md` — that records what's actually known about a topic (premises, rejected options, open questions), written by you and updated by you. Nothing else about the session persists, and nothing needs to. See [docs/concepts.md](docs/concepts.md) for the reasoning in full; this README covers the tool.
+`dw` takes a different approach: instead of carrying the conversation forward, it carries a single document — `STATE.md` — that records what's actually known about a topic (premises, rejected options, open questions). After each Claude Code turn, a background `dw` worker folds what was settled into `STATE.md`. You stay the editor. Nothing else about the session persists, and nothing needs to. See [docs/concepts.md](docs/concepts.md) for the reasoning in full; this README covers the tool.
 
 - **One command, one directory** — `dw <topic>` resolves to `<root>/<YYYY-MM-DD>-<topic>/`: exact match, else partial match(es), else it creates one. No separate create command.
 - **State, not conversation log** — a new workspace gets one file, `STATE.md`. That's what carries forward across sessions.
@@ -23,7 +23,8 @@ A conversation ends and the log is gone the next time you start one — Claude h
 - **Ambiguity goes to `fzf`, not to `dw`** — when a topic matches more than one workspace, `dw` prints every match; it never guesses which one you meant.
 - **One command, no modes** — `dw` always opens the picker, however many workspaces you have. Filter to find one, or keep typing past the last match and `enter` creates that topic. There is nothing else to learn.
 - **Resume by default** — your last-visited workspace is pinned to the top of the picker, so `dw` and `enter` gets you back to where you left off.
-- **Zero config, zero dependencies** — one environment variable (`DW_ROOT`), no YAML, and the Go standard library only.
+- **Background state capture** — a Claude Code `Stop` hook hands each finished turn to a detached `dw summarize`. It updates `STATE.md` with one cheap LLM call, and the session never waits for it. See [Background summaries](#background-summaries).
+- **Zero dependencies, optional config** — the Go standard library only. Works with no configuration: it falls back to `claude -p --model haiku`.
 
 ## Install
 
@@ -32,8 +33,8 @@ go install github.com/edge2992/dw@latest
 ```
 
 Don't use Go? Grab a prebuilt binary for your OS/arch from the
-[Releases](https://github.com/edge2992/dw/releases/latest) page (linux / macOS /
-windows × amd64 / arm64, with `checksums.txt`). Check the installed version with
+[Releases](https://github.com/edge2992/dw/releases/latest) page (linux / macOS ×
+amd64 / arm64, with `checksums.txt`; Windows is not supported). Check the installed version with
 `dw version`.
 
 ## Usage
@@ -70,7 +71,7 @@ Both forms print the same tab-separated contract to stdout:
 <absolute path>\t<marker + title>\t<first open question>\t<directory name>
 ```
 
-Everything goes to **stdout**; diagnostics go to stderr. `dw` never asks for confirmation and never launches `claude` itself — it only ever prints paths.
+Everything goes to **stdout**; diagnostics go to stderr. `dw` never asks for confirmation and never launches an interactive `claude`. It runs `claude -p` in the background only as the summarizer fallback.
 
 | Command               | Description                                                                                                                                   |
 | --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -78,7 +79,9 @@ Everything goes to **stdout**; diagnostics go to stderr. `dw` never asks for con
 | `dw <topic>`          | Open the picker with `<topic>` pre-typed. Without shell integration, resolves `<topic>`: exact match, else partial match(es), else create it. |
 | `dw init <zsh\|bash>` | Print the shell function that wires `dw` into `fzf` and `cd`.                                                                                 |
 | `dw version`          | Print the version.                                                                                                                            |
-| `dw help`             | Show usage, including the resolved `DW_ROOT`.                                                                                                 |
+| `dw help`             | Show usage, including the resolved `DW_ROOT` and summarizer backend.                                                                          |
+| `dw hook`             | Plumbing: the Claude Code `Stop` hook. Not meant to be typed.                                                                                 |
+| `dw summarize [<ws>]` | Plumbing: fold new turns into `STATE.md` now, in the foreground (default: current workspace, newest transcript).                              |
 
 Run `dw` straight from a prompt without `eval "$(dw init zsh)"` and you'll get raw TSV plus a note on stderr telling you so — and on a fresh install with no workspaces, a short getting-started block instead of the silence earlier versions printed.
 
@@ -88,19 +91,62 @@ Run `dw` straight from a prompt without `eval "$(dw init zsh)"` and you'll get r
 <root>/CLAUDE.md                     # Convention — written once, yours from then on
 <root>/<YYYY-MM-DD>-<topic-slug>/
   STATE.md                           # State — what's known about this topic
+  .claude/settings.json              # Stop hook → dw hook (written once; refreshed only if dw wrote it)
   sources/                           # Sources — collected material (create as needed)
   work/                              # Working area — disposable, not carried forward (create as needed)
 ```
 
-Four layers, described fully in [docs/concepts.md](docs/concepts.md): **Sources** (read-only material collected for the topic), **State** (`STATE.md`, the only layer that survives across sessions — Claude proposes edits as a diff, never writes it directly), **Working area** (`work/`, disposable generated output), and **Convention** (`<root>/CLAUDE.md`, shared by every topic). `sources/` and `work/` aren't scaffolded — create them by hand once a topic actually needs them.
+Four layers, described fully in [docs/concepts.md](docs/concepts.md): **Sources** (read-only material collected for the topic), **State** (`STATE.md`, the only layer that survives across sessions — updated in the background by dw after each turn; the session reads it but never edits it, and you can edit it any time), **Working area** (`work/`, disposable generated output), and **Convention** (`<root>/CLAUDE.md`, shared by every topic). `sources/` and `work/` aren't scaffolded — create them by hand once a topic actually needs them.
 
 ### A note on `CLAUDE.md` and long sessions
 
 Claude Code loads `CLAUDE.md` files by walking up the directory tree from the working directory, so running `claude` inside `<root>/<topic>/` loads `<root>/CLAUDE.md` in full at launch. What isn't documented is whether that ancestor file is _re-injected_ after `/compact` the way the project-root `CLAUDE.md` is — so on a very long session, the convention may fade before `STATE.md`'s content does. If you notice Claude drifting from the convention late in a long session, that's the likely cause; re-reading `<root>/CLAUDE.md` explicitly is the workaround.
 
+## Background summaries
+
+Every workspace has a `.claude/settings.json` with a `Stop` hook that runs `dw hook`, using the absolute path of the `dw` binary. Workspaces created before this feature get it the next time you enter them with `dw`. If a workspace already has its own `settings.json`, dw leaves it alone. Add the hook there by hand. To opt a workspace out, delete the hook entry.
+
+After each turn:
+
+1. `dw hook` checks that `$CLAUDE_PROJECT_DIR` is a workspace under `DW_ROOT`, spawns a detached `dw summarize`, and exits 0 at once. It writes nothing to stdout.
+2. The worker waits out a debounce (default 20 s), so a burst of turns becomes one LLM call. Then it takes a per-workspace lock and reads the transcript from where it last stopped.
+3. It sends the current `STATE.md` plus the new turns to the LLM. Only user and assistant text is sent, plus tool names with their inputs truncated to 200 bytes. **Tool results are never sent.** Obvious secrets are redacted first (`sk-…`, `AKIA…`, `ghp_…`, PEM blocks, and any line assigning a `*KEY*`/`*TOKEN*`/`*SECRET*`/`*PASSWORD*`). Redaction is a seatbelt, not a guarantee.
+4. The reply is rejected if it renames the H1 title, loses `## 未決の問い`, shrinks a file over 1 KiB below 40%, or drops the text of any existing open question.
+5. The worker backs up the old `STATE.md` to `<cache>/dw/history/<hash>/<timestamp>.md` (the last 20 are kept). Then it swaps in the new file atomically, but only if nobody edited it during the call. If someone did, the worker retries once.
+
+`dw` and `dw <topic>` warn on stderr after three failed summaries in a row. Every run logs one line to `<cache>/dw/summarize.log`; `<cache>` is `~/.cache` on Linux and `~/Library/Caches` on macOS. To undo a bad summary, copy a version back from the history dir.
+
+The hook needs `DW_ROOT` in Claude Code's environment if you use a non-default root.
+
 ## Configuration
 
-`DW_ROOT` is the only knob — there is no config file. Defaults to `~/dw`:
+`DW_ROOT` sets the workspace root (env only). Summarizer settings come from env vars, then from the JSON file `$DW_CONFIG` or `~/.config/dw/config.json`, then from defaults. Unknown keys are an error.
+
+| Config key        | Env var                | Default  | Notes                                                                                   |
+| ----------------- | ---------------------- | -------- | --------------------------------------------------------------------------------------- |
+| `backend`         | `DW_SUMMARY_BACKEND`   | `auto`   | `auto` \| `openai` \| `claude` \| `off`                                                 |
+| `base_url`        | `DW_LLM_BASE_URL`      | _(none)_ | OpenAI-compatible endpoint incl. version path; dw posts to `{base_url}/chat/completions` |
+| `api_key`         | `DW_LLM_API_KEY`       | _(none)_ | Sent as a Bearer token if set. Keep the file `chmod 600`, or dw warns                     |
+| `model`           | `DW_LLM_MODEL`         | _(none)_ | No default; pick a cheap model                                                          |
+| `claude_command`  | `DW_CLAUDE_COMMAND`    | `claude` | Fallback backend                                                                        |
+| `claude_model`    | `DW_CLAUDE_MODEL`      | `haiku`  |                                                                                         |
+| `timeout`         | `DW_SUMMARY_TIMEOUT`   | `120s`   | Per summary                                                                             |
+| `max_input_bytes` | `DW_SUMMARY_MAX_INPUT` | `65536`  | Transcript slice cap (newest turns kept)                                                |
+| `debounce`        | `DW_SUMMARY_DEBOUNCE`  | `20s`    | Wait before summarizing, to batch turn bursts                                           |
+
+`auto` resolves as follows:
+
+- If `model` is set along with `api_key` or `base_url`, dw uses the OpenAI-compatible HTTP backend. That backend requires an explicit `base_url`; there is no default endpoint.
+- Otherwise, if `claude` is on `PATH`, dw uses `claude -p --model haiku` in a temp dir, with no tools and no settings.
+- Otherwise summaries are off.
+
+`OPENAI_*` variables are never read. `dw help` shows which backend is in effect. With the `claude` fallback, each summary uses your Claude plan.
+
+```json
+{ "base_url": "https://openrouter.ai/api/v1", "model": "<a cheap model id>", "api_key": "sk-…" }
+```
+
+`DW_ROOT` defaults to `~/dw`:
 
 ```sh
 export DW_ROOT=~/discussions

@@ -3,18 +3,28 @@
 // prints TSV to stdout; a thin shell wrapper (see `dw init`) does the cd,
 // handing off to fzf when a topic resolves to more than one candidate.
 //
+// Two plumbing commands keep each workspace's STATE.md current in the
+// background: `dw hook` is Claude Code's Stop hook, and `dw summarize` is the
+// worker it spawns (see internal/summarize).
+//
 // See docs/concepts.md for the ideas behind the layout, and the package doc
 // of internal/workspace for the resolution algorithm.
 package main
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"runtime/debug"
 	"strings"
+	"time"
 
+	"github.com/edge2992/dw/internal/summarize"
 	"github.com/edge2992/dw/internal/workspace"
 )
 
@@ -32,6 +42,12 @@ Usage:
   dw version          Print the version
   dw help             Show this help
 
+Plumbing (not meant to be typed):
+  dw hook             Claude Code Stop hook: hand the finished turn to the summarizer
+  dw summarize [--session ID --transcript PATH] [<workspace>]
+                      Fold new turns into <workspace>/STATE.md now (default: the
+                      current directory and its newest transcript)
+
 Output (stdout, tab-separated, one row per workspace):
   <absolute path>	<marker + title>	<first open question>	<directory name>
 The marker is "* " for the most recently visited workspace, "  " otherwise.
@@ -45,6 +61,7 @@ and whatever you type that matches nothing becomes a new workspace.
 Enable shell integration once with:  eval "$(dw init zsh)"   (or bash)
 
 Root: %s
+Summarizer: %s
 `
 
 // emptyRootHint replaces the empty listing a first run would otherwise print.
@@ -65,11 +82,11 @@ const integrationHint = `dw: shell integration is not enabled, so these rows are
     Run  eval "$(dw init zsh)"  (or bash) to get the fzf picker and cd.
 `
 
-func main() { os.Exit(run(os.Args, os.Stdout, os.Stderr)) }
+func main() { os.Exit(run(os.Args, os.Stdin, os.Stdout, os.Stderr)) }
 
 // run dispatches argv to a subcommand and returns the process exit code.
 // argv[0] is the program name; argv[1] is the subcommand or topic (if any).
-func run(argv []string, stdout, stderr io.Writer) int {
+func run(argv []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if len(argv) >= 2 {
 		switch argv[1] {
 		case "init":
@@ -78,6 +95,10 @@ func run(argv []string, stdout, stderr io.Writer) int {
 			return cmdVersion(stdout)
 		case "help", "--help", "-h":
 			return cmdHelp(stdout)
+		case "hook":
+			return cmdHook(stdin)
+		case "summarize":
+			return cmdSummarize(stderr, argv[2:])
 		}
 	}
 
@@ -138,9 +159,9 @@ func cmdList(root string, stdout, stderr io.Writer) int {
 }
 
 // cmdResolve resolves arg to one or more workspaces (`dw <topic>`), creating
-// one if nothing matches. SaveLast is called only when Resolve settles on
-// exactly one workspace — printing several candidates for fzf to choose
-// among is not itself a "visit".
+// one if nothing matches. Only when Resolve settles on exactly one workspace
+// is it treated as a visit (see visit) — printing several candidates for fzf
+// to choose among is not.
 func cmdResolve(root string, stdout, stderr io.Writer, arg string) int {
 	matches, _, err := workspace.Resolve(root, arg)
 	if err != nil {
@@ -159,17 +180,33 @@ func cmdResolve(root string, stdout, stderr io.Writer, arg string) int {
 
 	last := workspace.LastPath()
 	if len(matches) == 1 {
-		if err := workspace.SaveLast(matches[0].Path); err != nil {
-			fmt.Fprintln(stderr, "dw: warning: could not save last workspace:", err)
-		} else {
-			last = matches[0].Path
-		}
+		last = visit(stderr, matches[0].Path, last)
 	}
 	printRows(stdout, matches, last)
 	// Resolve always yields at least one match (it creates when nothing
 	// matches), so this only ever prints the shell-integration hint.
 	hintFirstRun(stdout, stderr, root, len(matches))
 	return 0
+}
+
+// visit does what entering a workspace entails: pin it as last visited
+// (returning the new pin, or last if that failed), backfill its Stop hook,
+// and warn if its background summaries keep failing. stderr is not captured
+// by the wrapper's $(…), so the warning reaches the user as they enter.
+func visit(stderr io.Writer, path, last string) string {
+	if err := workspace.SaveLast(path); err != nil {
+		fmt.Fprintln(stderr, "dw: warning: could not save last workspace:", err)
+	} else {
+		last = path
+	}
+	if err := workspace.EnsureScaffold(path); err != nil {
+		fmt.Fprintln(stderr, "dw: warning: could not install the STATE.md summary hook:", err)
+	}
+	if since, failing := summarize.FailingSince(path); failing {
+		fmt.Fprintf(stderr, "dw: warning: STATE.md summaries failing since %s; see %s\n",
+			since.Local().Format(time.DateTime), summarize.LogPath())
+	}
+	return last
 }
 
 // printRows writes one TSV row per project (see workspace.Project.TSVRow).
@@ -221,7 +258,7 @@ const shellInit = `__dw_pick() {
 
 dw() {
   case "${1:-}" in
-    init|help|version|--help|-h|--version|-v)
+    init|help|version|hook|summarize|--help|-h|--version|-v)
       command dw "$@"
       return ;;
   esac
@@ -282,8 +319,122 @@ func cmdVersion(stdout io.Writer) int {
 	return 0
 }
 
-// cmdHelp prints the usage text, including the resolved root (`dw help`).
+// cmdHelp prints the usage text, including the resolved root and summarizer
+// backend (`dw help`).
 func cmdHelp(stdout io.Writer) int {
-	fmt.Fprintf(stdout, usageTemplate, workspace.Root())
+	cfg, err := summarize.Load()
+	fmt.Fprintf(stdout, usageTemplate, workspace.Root(), summarize.Describe(cfg, err))
+	return 0
+}
+
+// spawnWorker starts the detached summarize worker. Declared as a variable so
+// tests can observe the hook without spawning processes.
+var spawnWorker = summarize.Spawn
+
+// stopPayload is the part of Claude Code's Stop hook input dw uses.
+type stopPayload struct {
+	SessionID      string `json:"session_id"`
+	TranscriptPath string `json:"transcript_path"`
+	StopHookActive bool   `json:"stop_hook_active"`
+}
+
+// cmdHook is Claude Code's Stop hook (`dw hook`). It must be fast and must
+// never affect the session: it always exits 0 and never writes to stdout
+// (for a Stop hook, both carry meaning to Claude Code). Anything worth
+// knowing goes to the summarizer log.
+func cmdHook(stdin io.Reader) int {
+	// Set in the environment of the worker's own `claude -p`: never let a
+	// summary trigger another summary.
+	if os.Getenv("DW_SUMMARIZER") == "1" {
+		return 0
+	}
+	var p stopPayload
+	if err := json.NewDecoder(io.LimitReader(stdin, 1<<20)).Decode(&p); err != nil {
+		summarize.Logf("hook: bad payload: %v", err)
+		return 0
+	}
+	// stop_hook_active means Claude is continuing because of a Stop hook;
+	// that turn is not finished, and the next Stop covers it.
+	if p.StopHookActive || p.SessionID == "" || p.TranscriptPath == "" {
+		return 0
+	}
+	ws := os.Getenv("CLAUDE_PROJECT_DIR")
+	if !workspace.IsWorkspace(workspace.Root(), ws) {
+		return 0
+	}
+	cfg, err := summarize.Load()
+	if err != nil {
+		summarize.Logf("hook: config: %v", err)
+		return 0
+	}
+	if sel, err := cfg.Select(); err != nil || sel.Backend == summarize.BackendOff {
+		if err != nil {
+			summarize.Logf("hook: config: %v", err)
+		}
+		return 0
+	}
+	if err := spawnWorker(summarize.Job{Workspace: ws, Session: p.SessionID, Transcript: p.TranscriptPath}); err != nil {
+		summarize.Logf("hook: spawn: %v", err)
+	}
+	return 0
+}
+
+// cmdSummarize runs the summarize worker in the foreground
+// (`dw summarize [--session ID --transcript PATH] [<workspace>]`). The hook
+// adds --from-hook, which applies the debounce; by hand it runs at once and
+// prints its result to stderr.
+func cmdSummarize(stderr io.Writer, args []string) int {
+	fs := flag.NewFlagSet("dw summarize", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	session := fs.String("session", "", "Claude Code session ID")
+	transcript := fs.String("transcript", "", "path to the session's transcript JSONL")
+	fromHook := fs.Bool("from-hook", false, "spawned by dw hook: debounce first, log only")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if fs.NArg() > 1 || (*session == "") != (*transcript == "") {
+		fmt.Fprintln(stderr, "Usage: dw summarize [--session ID --transcript PATH] [<workspace>]")
+		return 2
+	}
+	ws, err := filepath.Abs(fs.Arg(0)) // "" → the current directory
+	if err != nil {
+		fmt.Fprintln(stderr, "dw summarize:", err)
+		return 1
+	}
+	fail := func(err error) int {
+		summarize.Logf("summarize: ws=%s: %v", filepath.Base(ws), err)
+		fmt.Fprintln(stderr, "dw summarize:", err)
+		return 1
+	}
+	if !workspace.IsWorkspace(workspace.Root(), ws) {
+		return fail(fmt.Errorf("%s is not a workspace under %s", ws, workspace.Root()))
+	}
+	cfg, err := summarize.Load()
+	if err != nil {
+		return fail(err)
+	}
+	for _, w := range cfg.Warnings {
+		summarize.Logf("config: warning: %s", w)
+	}
+	s, err := summarize.New(cfg)
+	if err != nil {
+		return fail(err)
+	}
+	job := summarize.Job{Workspace: ws, Session: *session, Transcript: *transcript}
+	if job.Session == "" {
+		if job.Session, job.Transcript, err = summarize.NewestTranscript(ws); err != nil {
+			return fail(err)
+		}
+	}
+	if *fromHook {
+		job.Debounce = cfg.Debounce
+	}
+	result := summarize.Worker{Config: cfg, Summarizer: s}.Run(context.Background(), job)
+	if !*fromHook { // from the hook, stderr is the log file, which already has the result
+		fmt.Fprintln(stderr, "dw summarize:", result)
+	}
+	if strings.HasPrefix(result, "error:") || strings.HasPrefix(result, "rejected:") {
+		return 1
+	}
 	return 0
 }
