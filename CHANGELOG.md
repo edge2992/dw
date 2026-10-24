@@ -1,5 +1,26 @@
 # Changelog
 
+## [2.0.0](https://github.com/edge2992/dw/compare/v1.1.0...v2.0.0) (2026-10-24)
+
+
+### ⚠ BREAKING CHANGES
+
+* move the module to `github.com/edge2992/dw/v2`; install with `go install github.com/edge2992/dw/v2@latest`
+* print two TSV columns, `<path>\t<marker + directory name>`
+* rebuild dw around topic-named main notes laid out as `<root>/<YYYY-MM-DD>-<name>/<name>.md`; dw no longer creates STATE.md or a root CLAUDE.md
+
+### Features
+
+* add `dw new <name>` and ctrl-o in the picker to create a topic even when its name is part of an existing one ([e3680be](https://github.com/edge2992/dw/commit/e3680bed74006a3ac3f59858984325ce06feb197))
+* announce a new topic on stderr as `dw: created <path>` ([e3680be](https://github.com/edge2992/dw/commit/e3680bed74006a3ac3f59858984325ce06feb197))
+* match names ignoring case, spaces, `-` and `_` ([e3680be](https://github.com/edge2992/dw/commit/e3680bed74006a3ac3f59858984325ce06feb197))
+* move the module to `github.com/edge2992/dw/v2`; install with `go install github.com/edge2992/dw/v2@latest` ([cb46989](https://github.com/edge2992/dw/commit/cb469891606689d5dcb59a8994e09eba1f290e2c))
+* name new topics so a shell can type them: spaces and shell, path or link symbols become `-`, names are compared in NFC, and Windows reserved names exit 2 ([cb46989](https://github.com/edge2992/dw/commit/cb469891606689d5dcb59a8994e09eba1f290e2c))
+* pin the five most recently visited topics to the top of the listing ([e3680be](https://github.com/edge2992/dw/commit/e3680bed74006a3ac3f59858984325ce06feb197))
+* preview a topic's files, then the head of its main note, README.md or STATE.md ([e3680be](https://github.com/edge2992/dw/commit/e3680bed74006a3ac3f59858984325ce06feb197))
+* print two TSV columns, `<path>\t<marker + directory name>` ([e3680be](https://github.com/edge2992/dw/commit/e3680bed74006a3ac3f59858984325ce06feb197))
+* rebuild dw around topic-named main notes laid out as `<root>/<YYYY-MM-DD>-<name>/<name>.md`; dw no longer creates STATE.md or a root CLAUDE.md ([e3680be](https://github.com/edge2992/dw/commit/e3680bed74006a3ac3f59858984325ce06feb197))
+
 ## [1.1.0](https://github.com/edge2992/dw/compare/v1.0.0...v1.1.0) (2026-08-09)
 
 
