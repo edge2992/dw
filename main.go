@@ -222,10 +222,11 @@ func printRows(w io.Writer, topics []topic.Topic, last string) {
 // __dw_pick is split out of dw() so tests can drive the picker with a stub fzf
 // without allocating a terminal: dw() owns the `[ -t 0 ]` gate, __dw_pick owns
 // the loop. zsh and bash share this body.
-const shellInit = `# Preview the head of the main note (<dir>/<dir minus date prefix>.md), or of
-# README.md or STATE.md for topics that have none, then the files the topic
-# holds, since its html, txt and other notes are often what tells topics apart.
-__dw_preview='d={1}; n=${d##*/}; n=${n#[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]-}; for f in "$d/$n.md" "$d/README.md" "$d/STATE.md"; do [ -f "$f" ] && { head -30 "$f"; echo; break; }; done; echo "--- files"; ls "$d"'
+const shellInit = `# Preview the files the topic holds on one line, since its html, txt and other
+# notes are often what tells topics apart and a long note would push them out
+# of view, then the head of the main note (<dir>/<dir minus date prefix>.md),
+# or of README.md or STATE.md for topics that have none.
+__dw_preview='d={1}; n=${d##*/}; n=${n#[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]-}; printf "files: "; ls -m "$d"; for f in "$d/$n.md" "$d/README.md" "$d/STATE.md"; do [ -f "$f" ] && { echo; head -40 "$f"; break; }; done; :'
 
 __dw_pick() {
   local rows out query key sel st

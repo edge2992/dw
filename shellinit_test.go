@@ -410,21 +410,18 @@ func TestPick_CtrlOCreatesDespiteMatch(t *testing.T) {
 	}
 }
 
-// sortFileList sorts the lines after "--- files": ls collates by locale, and
-// macOS puts some non-ASCII names before ASCII ones.
+// sortFileList sorts the names on the preview's "files: " line: ls collates by
+// locale, and macOS puts some non-ASCII names before ASCII ones.
 func sortFileList(preview string) string {
-	head, list, ok := strings.Cut(preview, "--- files\n")
-	if !ok {
-		return preview
-	}
-	names := strings.Split(list, "\n")
+	first, rest, _ := strings.Cut(preview, "\n")
+	names := strings.Split(strings.TrimPrefix(first, "files: "), ", ")
 	sort.Strings(names)
-	return head + "--- files\n" + strings.Join(names, "\n")
+	return strings.TrimRight("files: "+strings.Join(names, ", ")+"\n"+rest, "\n")
 }
 
-// TestPreview_ShowsNoteThenFiles runs the preview command the way fzf does:
+// TestPreview_ShowsFilesThenNote runs the preview command the way fzf does:
 // {1} replaced by the single-quoted path column, then handed to a shell.
-func TestPreview_ShowsNoteThenFiles(t *testing.T) {
+func TestPreview_ShowsFilesThenNote(t *testing.T) {
 	eachShell(t, func(t *testing.T, shell string) {
 		env := buildEnv(t)
 		files := map[string]map[string]string{
@@ -434,10 +431,10 @@ func TestPreview_ShowsNoteThenFiles(t *testing.T) {
 			"2026-01-03-bare":      {"notes.txt": ""},
 		}
 		want := map[string]string{
-			"2026-01-01-調べ方を 設計する": "# 調べ方を 設計する\n\n--- files\ncompare.html\n調べ方を 設計する.md",
-			"2026-01-02-legacy":    "# Legacy state\n\n--- files\nSTATE.md",
-			"hand-made":            "# Hand made\n\n--- files\nREADME.md\nSTATE.md",
-			"2026-01-03-bare":      "--- files\nnotes.txt",
+			"2026-01-01-調べ方を 設計する": "files: compare.html, 調べ方を 設計する.md\n\n# 調べ方を 設計する",
+			"2026-01-02-legacy":    "files: STATE.md\n\n# Legacy state",
+			"hand-made":            "files: README.md, STATE.md\n\n# Hand made",
+			"2026-01-03-bare":      "files: notes.txt",
 		}
 		for dir, fs := range files {
 			env.mkTopic(t, dir)
