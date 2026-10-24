@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -31,7 +32,7 @@ eval "st=\$STUB_ST$n"
 exit "${st:-0}"
 `
 
-// shellEnv is one isolated run of the wrapper: a DW_ROOT to create workspaces
+// shellEnv is one isolated run of the wrapper: a DW_ROOT to create topics
 // in, a bin dir holding the real dw plus the stub fzf, and the stub's scratch
 // space.
 type shellEnv struct {
@@ -42,7 +43,7 @@ type shellEnv struct {
 
 // buildEnv compiles dw into a temp bin dir and installs the stub fzf beside
 // it. The binary is built once per test via t.TempDir so runs cannot see each
-// other's workspaces.
+// other's topics.
 func buildEnv(t *testing.T) shellEnv {
 	t.Helper()
 	if _, err := exec.LookPath("go"); err != nil {
@@ -135,15 +136,15 @@ func asExitError(err error, target **exec.ExitError) bool {
 	return ok
 }
 
-// mkWorkspace creates <root>/<name>/ so a test starts with existing rows.
-func (e shellEnv) mkWorkspace(t *testing.T, name string) {
+// mkTopic creates <root>/<name>/ so a test starts with existing rows.
+func (e shellEnv) mkTopic(t *testing.T, name string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Join(e.root, name), 0o755); err != nil {
 		t.Fatal(err)
 	}
 }
 
-// dirs lists the workspace directories currently under root.
+// dirs lists the topic directories currently under root.
 func (e shellEnv) dirs(t *testing.T) []string {
 	t.Helper()
 	entries, err := os.ReadDir(e.root)
@@ -181,9 +182,9 @@ func answer(n int, out string, status int) []string {
 	}
 }
 
-// selection is what fzf prints with --print-query when the user picks a row:
-// the query, then the chosen line.
-func selection(query, row string) string { return query + "\n" + row }
+// selection is what fzf prints with --print-query and --expect when the user
+// picks a row with enter: the query, an empty key line, then the chosen line.
+func selection(query, row string) string { return query + "\n\n" + row }
 
 func eachShell(t *testing.T, fn func(t *testing.T, shell string)) {
 	t.Helper()
@@ -192,7 +193,7 @@ func eachShell(t *testing.T, fn func(t *testing.T, shell string)) {
 	}
 }
 
-// TestPick_EmptyRootCreatesTypedTopic is the first-run path: no workspaces at
+// TestPick_EmptyRootCreatesTypedTopic is the first-run path: no topics at
 // all, so fzf shows an empty list, and whatever is typed becomes the topic.
 func TestPick_EmptyRootCreatesTypedTopic(t *testing.T) {
 	eachShell(t, func(t *testing.T, shell string) {
@@ -202,8 +203,8 @@ func TestPick_EmptyRootCreatesTypedTopic(t *testing.T) {
 			t.Fatalf("code = %d, want 0 (stderr: %s)", code, stderr)
 		}
 		dirs := env.dirs(t)
-		if len(dirs) != 1 || !strings.HasSuffix(dirs[0], "-first-topic") {
-			t.Fatalf("root holds %v, want one <date>-first-topic workspace", dirs)
+		if len(dirs) != 1 || !strings.HasSuffix(dirs[0], "-first topic") {
+			t.Fatalf("root holds %v, want one <date>-first topic dir", dirs)
 		}
 		if !strings.Contains(stdout, dirs[0]) {
 			t.Errorf("__dw_pick printed %q, want the row for %q", stdout, dirs[0])
@@ -222,17 +223,17 @@ func TestPick_EmptyRootFeedsFzfZeroItems(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(b) != 0 {
-		t.Errorf("fzf received %q, want zero bytes for an empty workspace list", b)
+		t.Errorf("fzf received %q, want zero bytes for an empty topic list", b)
 	}
 }
 
 // TestPick_SelectionOpensWithoutCreating covers the ordinary hit: one existing
-// workspace, chosen from the picker.
+// topic, chosen from the picker.
 func TestPick_SelectionOpensWithoutCreating(t *testing.T) {
 	eachShell(t, func(t *testing.T, shell string) {
 		env := buildEnv(t)
-		env.mkWorkspace(t, "2026-01-01-alpha")
-		row := filepath.Join(env.root, "2026-01-01-alpha") + "\t  alpha\t\t2026-01-01-alpha"
+		env.mkTopic(t, "2026-01-01-alpha")
+		row := filepath.Join(env.root, "2026-01-01-alpha") + "\t  2026-01-01-alpha"
 
 		stdout, stderr, code := env.run(t, shell, "__dw_pick", answer(1, selection("al", row), 0)...)
 		if code != 0 {
@@ -242,25 +243,26 @@ func TestPick_SelectionOpensWithoutCreating(t *testing.T) {
 			t.Errorf("__dw_pick printed %q, want the selected row %q", stdout, row)
 		}
 		if dirs := env.dirs(t); len(dirs) != 1 {
-			t.Errorf("root holds %v, want the single pre-existing workspace", dirs)
+			t.Errorf("root holds %v, want the single pre-existing topic", dirs)
 		}
 	})
 }
 
-// TestPick_NoFzfMatchStillResolvesBySlug is the case that keeps the picker
-// from manufacturing duplicates: fzf found nothing, but dw's own substring
-// match on the slug does, so the existing workspace wins over creating one.
-func TestPick_NoFzfMatchStillResolvesBySlug(t *testing.T) {
+// TestPick_NoFzfMatchStillResolvesByName is the case that keeps the picker
+// from manufacturing duplicates: fzf found nothing (its smart case makes an
+// upper-case query case-sensitive), but dw's own case-insensitive substring
+// match does, so the existing topic wins over creating one.
+func TestPick_NoFzfMatchStillResolvesByName(t *testing.T) {
 	eachShell(t, func(t *testing.T, shell string) {
 		env := buildEnv(t)
-		env.mkWorkspace(t, "2026-01-01-datadog-cost")
+		env.mkTopic(t, "2026-01-01-datadog-cost")
 
-		stdout, stderr, code := env.run(t, shell, "__dw_pick", answer(1, "cost", 1)...)
+		stdout, stderr, code := env.run(t, shell, "__dw_pick", answer(1, "Cost", 1)...)
 		if code != 0 {
 			t.Fatalf("code = %d, want 0 (stderr: %s)", code, stderr)
 		}
 		if dirs := env.dirs(t); len(dirs) != 1 {
-			t.Fatalf("root holds %v, want no second workspace for a query that already matches", dirs)
+			t.Fatalf("root holds %v, want no second topic for a query that already matches", dirs)
 		}
 		if !strings.Contains(stdout, "2026-01-01-datadog-cost") {
 			t.Errorf("__dw_pick printed %q, want the existing datadog-cost row", stdout)
@@ -282,7 +284,7 @@ func TestPick_AbortCreatesNothing(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			eachShell(t, func(t *testing.T, shell string) {
 				env := buildEnv(t)
-				env.mkWorkspace(t, "2026-01-01-alpha")
+				env.mkTopic(t, "2026-01-01-alpha")
 
 				stdout, _, code := env.run(t, shell, "__dw_pick", answer(1, tc.out, tc.status)...)
 				if code == 0 {
@@ -292,23 +294,23 @@ func TestPick_AbortCreatesNothing(t *testing.T) {
 					t.Errorf("__dw_pick printed %q, want nothing", stdout)
 				}
 				if dirs := env.dirs(t); len(dirs) != 1 {
-					t.Errorf("root holds %v, want only the pre-existing workspace", dirs)
+					t.Errorf("root holds %v, want only the pre-existing topic", dirs)
 				}
 			})
 		})
 	}
 }
 
-// TestPick_SeveralSlugMatchesReenterOnce is the loop's termination guarantee.
-// The query matches two workspaces by slug but neither by title, so the picker
+// TestPick_SeveralNameMatchesReenterOnce is the loop's termination guarantee.
+// The query matches two topics by name but fzf matches neither, so the picker
 // re-opens on just those two — with the query cleared, because re-opening on a
 // query fzf already failed to match would spin forever.
-func TestPick_SeveralSlugMatchesReenterOnce(t *testing.T) {
+func TestPick_SeveralNameMatchesReenterOnce(t *testing.T) {
 	eachShell(t, func(t *testing.T, shell string) {
 		env := buildEnv(t)
-		env.mkWorkspace(t, "2026-01-01-datadog-cost")
-		env.mkWorkspace(t, "2026-01-02-datadog-alerts")
-		chosen := filepath.Join(env.root, "2026-01-02-datadog-alerts") + "\t  datadog-alerts\t\t2026-01-02-datadog-alerts"
+		env.mkTopic(t, "2026-01-01-datadog-cost")
+		env.mkTopic(t, "2026-01-02-datadog-alerts")
+		chosen := filepath.Join(env.root, "2026-01-02-datadog-alerts") + "\t  2026-01-02-datadog-alerts"
 
 		env.run(t, shell, "__dw_pick",
 			append(answer(1, "Datadog", 1), answer(2, selection("", chosen), 0)...)...)
@@ -317,7 +319,7 @@ func TestPick_SeveralSlugMatchesReenterOnce(t *testing.T) {
 			t.Errorf("fzf ran %d times, want exactly 2 (one re-entry, then settle)", got)
 		}
 		if dirs := env.dirs(t); len(dirs) != 2 {
-			t.Errorf("root holds %v, want the two pre-existing workspaces", dirs)
+			t.Errorf("root holds %v, want the two pre-existing topics", dirs)
 		}
 		args, err := os.ReadFile(filepath.Join(env.stubDir, "args"))
 		if err != nil {
@@ -330,13 +332,13 @@ func TestPick_SeveralSlugMatchesReenterOnce(t *testing.T) {
 	})
 }
 
-// TestPick_PassesArgumentsAsQuery checks that `dw <topic>` opens the picker
+// TestPick_PassesArgumentsAsQuery checks that `dw <name>` opens the picker
 // pre-filled instead of resolving behind the user's back, and that the wrapper
 // asks for the query back.
 func TestPick_PassesArgumentsAsQuery(t *testing.T) {
 	env := buildEnv(t)
-	env.mkWorkspace(t, "2026-01-01-alpha")
-	row := filepath.Join(env.root, "2026-01-01-alpha") + "\t  alpha\t\t2026-01-01-alpha"
+	env.mkTopic(t, "2026-01-01-alpha")
+	row := filepath.Join(env.root, "2026-01-01-alpha") + "\t  2026-01-01-alpha"
 
 	env.run(t, "bash", `__dw_pick "k8s" "mig"`, answer(1, selection("k8s mig", row), 0)...)
 
@@ -372,4 +374,87 @@ func TestShellInit_ParsesInBothShells(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestPick_CtrlOCreatesDespiteMatch is the umbrella-topic and recurring
+// incident case: what was typed matches an existing topic, in fzf and by
+// name, yet ctrl-o makes a new topic named exactly that.
+func TestPick_CtrlOCreatesDespiteMatch(t *testing.T) {
+	for _, status := range []int{0, 1} {
+		t.Run(fmt.Sprintf("fzf status %d", status), func(t *testing.T) {
+			eachShell(t, func(t *testing.T, shell string) {
+				env := buildEnv(t)
+				env.mkTopic(t, "2026-01-01-アーキ定例 10-28")
+				row := filepath.Join(env.root, "2026-01-01-アーキ定例 10-28") + "\t  2026-01-01-アーキ定例 10-28"
+				out := "アーキ定例\nctrl-o"
+				if status == 0 {
+					out += "\n" + row
+				}
+
+				stdout, stderr, code := env.run(t, shell, "__dw_pick", answer(1, out, status)...)
+				if code != 0 {
+					t.Fatalf("code = %d, want 0 (stderr: %s)", code, stderr)
+				}
+				dirs := env.dirs(t)
+				if len(dirs) != 2 {
+					t.Fatalf("root holds %v, want the existing topic plus a new アーキ定例", dirs)
+				}
+				if !strings.HasSuffix(strings.TrimSpace(stdout), "-アーキ定例") {
+					t.Errorf("__dw_pick printed %q, want the new アーキ定例 row", stdout)
+				}
+				if !strings.Contains(stderr, "dw: created") {
+					t.Errorf("stderr = %q, want the creation announced", stderr)
+				}
+			})
+		})
+	}
+}
+
+// sortFileList sorts the names on the preview's "files: " line: ls collates by
+// locale, and macOS puts some non-ASCII names before ASCII ones.
+func sortFileList(preview string) string {
+	first, rest, _ := strings.Cut(preview, "\n")
+	names := strings.Split(strings.TrimPrefix(first, "files: "), ", ")
+	sort.Strings(names)
+	return strings.TrimRight("files: "+strings.Join(names, ", ")+"\n"+rest, "\n")
+}
+
+// TestPreview_ShowsFilesThenNote runs the preview command the way fzf does:
+// {1} replaced by the single-quoted path column, then handed to a shell.
+func TestPreview_ShowsFilesThenNote(t *testing.T) {
+	eachShell(t, func(t *testing.T, shell string) {
+		env := buildEnv(t)
+		files := map[string]map[string]string{
+			"2026-01-01-調べ方を 設計する": {"調べ方を 設計する.md": "# 調べ方を 設計する\n", "compare.html": ""},
+			"2026-01-02-legacy":    {"STATE.md": "# Legacy state\n"},
+			"hand-made":            {"README.md": "# Hand made\n", "STATE.md": "# not shown\n"},
+			"2026-01-03-bare":      {"notes.txt": ""},
+		}
+		want := map[string]string{
+			"2026-01-01-調べ方を 設計する": "files: compare.html, 調べ方を 設計する.md\n\n# 調べ方を 設計する",
+			"2026-01-02-legacy":    "files: STATE.md\n\n# Legacy state",
+			"hand-made":            "files: README.md, STATE.md\n\n# Hand made",
+			"2026-01-03-bare":      "files: notes.txt",
+		}
+		for dir, fs := range files {
+			env.mkTopic(t, dir)
+			for name, body := range fs {
+				if err := os.WriteFile(filepath.Join(env.root, dir, name), []byte(body), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+
+		preview, _, _ := env.run(t, shell, `printf '%s' "$__dw_preview"`)
+		for dir, w := range want {
+			cmd := strings.ReplaceAll(preview, "{1}", "'"+filepath.Join(env.root, dir)+"'")
+			out, err := exec.Command(shell, "-c", cmd).CombinedOutput() //nolint:gosec // cmd is the wrapper's own preview string
+			if err != nil {
+				t.Fatalf("preview for %s failed: %v\n%s", dir, err, out)
+			}
+			if got := sortFileList(strings.TrimSpace(string(out))); got != w {
+				t.Errorf("preview for %s =\n%s\nwant\n%s", dir, got, w)
+			}
+		}
+	})
 }
