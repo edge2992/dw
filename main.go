@@ -38,8 +38,11 @@ Usage:
 Output (stdout, tab-separated, one row per topic):
   <absolute path>	<marker + directory name>
 The marker is "* " for the most recently visited topic, "  " otherwise.
-Names match ignoring case, spaces, "-" and "_". A new topic is announced on
-stderr as "dw: created <path>". When <name> matches more than one topic, every
+A new topic's directory and note are named with spaces and shell or link
+symbols turned into "-" (決済API 5xx 14:05 → 決済API-5xx-14-05); its heading
+keeps the name as typed. Names match ignoring case, spaces and those symbols.
+A new topic is announced on stderr as "dw: created <path>", after the
+rewritten name if there is one. When <name> matches more than one topic, every
 match is printed — dw never picks one for you; the shell wrapper hands the
 rows to fzf.
 
@@ -152,7 +155,7 @@ func cmdList(root string, stdout, stderr io.Writer) int {
 // if nothing matches.
 func cmdResolve(root string, stdout, stderr io.Writer, arg string) int {
 	matches, created, err := topic.Resolve(root, arg)
-	return printResolved(root, stdout, stderr, matches, created, err)
+	return printResolved(root, stdout, stderr, arg, matches, created, err)
 }
 
 // cmdNew opens the topic named exactly args, or creates it even when the
@@ -162,16 +165,18 @@ func cmdNew(root string, stdout, stderr io.Writer, args []string) int {
 		fmt.Fprintln(stderr, "dw new: specify a name\nUsage: dw new <name>")
 		return 2
 	}
-	t, created, err := topic.New(root, strings.Join(args, " "))
-	return printResolved(root, stdout, stderr, []topic.Topic{t}, created, err)
+	arg := strings.Join(args, " ")
+	t, created, err := topic.New(root, arg)
+	return printResolved(root, stdout, stderr, arg, []topic.Topic{t}, created, err)
 }
 
 // printResolved reports the outcome of Resolve or New. A new topic is
 // announced on stderr, since its row looks the same as an existing one's and
-// a typo or a search term would otherwise become a topic unnoticed. The visit
-// is recorded only for a single match — printing several candidates for fzf
-// to choose among is not itself a visit.
-func printResolved(root string, stdout, stderr io.Writer, matches []topic.Topic, created bool, err error) int {
+// a typo or a search term would otherwise become a topic unnoticed, along
+// with the name it was made under when that differs from what was typed.
+// The visit is recorded only for a single match — printing several
+// candidates for fzf to choose among is not itself a visit.
+func printResolved(root string, stdout, stderr io.Writer, arg string, matches []topic.Topic, created bool, err error) int {
 	if err != nil {
 		fmt.Fprintln(stderr, "dw:", err)
 		if errors.Is(err, topic.ErrEmptyName) || errors.Is(err, topic.ErrInvalidName) {
@@ -180,6 +185,9 @@ func printResolved(root string, stdout, stderr io.Writer, matches []topic.Topic,
 		return 1
 	}
 	if created {
+		if name, _ := topic.ParseName(arg); name.Title != name.Slug {
+			fmt.Fprintf(stderr, "dw: %q → %s\n", name.Title, name.Slug)
+		}
 		fmt.Fprintln(stderr, "dw: created", matches[0].Path)
 	}
 

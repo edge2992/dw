@@ -203,8 +203,8 @@ func TestPick_EmptyRootCreatesTypedTopic(t *testing.T) {
 			t.Fatalf("code = %d, want 0 (stderr: %s)", code, stderr)
 		}
 		dirs := env.dirs(t)
-		if len(dirs) != 1 || !strings.HasSuffix(dirs[0], "-first topic") {
-			t.Fatalf("root holds %v, want one <date>-first topic dir", dirs)
+		if len(dirs) != 1 || !strings.HasSuffix(dirs[0], "-first-topic") {
+			t.Fatalf("root holds %v, want one <date>-first-topic dir", dirs)
 		}
 		if !strings.Contains(stdout, dirs[0]) {
 			t.Errorf("__dw_pick printed %q, want the row for %q", stdout, dirs[0])

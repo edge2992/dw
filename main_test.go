@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // setup isolates DW_ROOT (to a fresh temp dir) and the recent-topics cache
@@ -108,13 +109,13 @@ func TestRun_ResolveCreatesAndLists(t *testing.T) {
 	if len(cols) != 2 {
 		t.Fatalf("row %q, want 2 tab-separated columns", lines[0])
 	}
-	if filepath.Dir(cols[0]) != root || !strings.HasSuffix(cols[0], "-Datadog Cost") {
-		t.Errorf("path column %q, want <root>/<date>-Datadog Cost", cols[0])
+	if filepath.Dir(cols[0]) != root || !strings.HasSuffix(cols[0], "-Datadog-Cost") {
+		t.Errorf("path column %q, want <root>/<date>-Datadog-Cost", cols[0])
 	}
 	if cols[1] != "* "+filepath.Base(cols[0]) {
 		t.Errorf("marker+dir column = %q, want %q (freshly resolved topic becomes \"last\")", cols[1], "* "+filepath.Base(cols[0]))
 	}
-	if _, err := os.Stat(filepath.Join(cols[0], "Datadog Cost.md")); err != nil {
+	if _, err := os.Stat(filepath.Join(cols[0], "Datadog-Cost.md")); err != nil {
 		t.Errorf("main note missing: %v", err)
 	}
 
@@ -178,7 +179,7 @@ func TestRun_MultipleMatches(t *testing.T) {
 
 func TestRun_BadNameExitsTwo(t *testing.T) {
 	root := setup(t)
-	for _, name := range []string{"   ", "a/b", "[x]", ".hidden"} {
+	for _, name := range []string{"   ", "???", "CON", "a\x01b"} {
 		_, stderr, code := runCmd(t, name)
 		if code != 2 {
 			t.Errorf("dw %q: code = %d, want 2 (stderr: %s)", name, code, stderr)
@@ -254,7 +255,7 @@ func TestRun_InitShellWrapper(t *testing.T) {
 // that was already there.
 func TestRun_CreationIsAnnounced(t *testing.T) {
 	setup(t)
-	stdout, stderr, _ := runCmd(t, "teams ベンダー")
+	stdout, stderr, _ := runCmd(t, "teamsベンダー")
 	path, _, _ := strings.Cut(stdout, "\t")
 	if stderr != "dw: created "+path+"\n" {
 		t.Errorf("stderr on creation = %q, want \"dw: created %s\"", stderr, path)
@@ -265,11 +266,26 @@ func TestRun_CreationIsAnnounced(t *testing.T) {
 	}
 }
 
-func TestRun_BadNameNamesTheCharacter(t *testing.T) {
+// TestRun_RewrittenNameIsAnnounced: the directory is not named what was
+// typed, so stderr says what it became; the heading keeps what was typed.
+func TestRun_RewrittenNameIsAnnounced(t *testing.T) {
 	setup(t)
-	_, stderr, code := runCmd(t, "決済API 5xx 14:05")
-	if code != 2 || !strings.Contains(stderr, `(found ":")`) {
-		t.Errorf("code = %d, stderr = %q; want 2 and the offending \":\" named", code, stderr)
+	stdout, stderr, code := runCmd(t, "決済API", "5xx", "14:05")
+	path, _, _ := strings.Cut(stdout, "\t")
+	want := `dw: "決済API 5xx 14:05" → 決済API-5xx-14-05` + "\ndw: created " + path + "\n"
+	if code != 0 || stderr != want {
+		t.Errorf("code = %d, stderr = %q; want 0 and %q", code, stderr, want)
+	}
+	if filepath.Base(path) != time.Now().Format("2006-01-02")+"-決済API-5xx-14-05" {
+		t.Errorf("created %s, want the rewritten name", filepath.Base(path))
+	}
+	note, err := os.ReadFile(filepath.Join(path, "決済API-5xx-14-05.md"))
+	if err != nil || string(note) != "# 決済API 5xx 14:05\n" {
+		t.Errorf("main note = %q, %v; want the H1 as typed", note, err)
+	}
+
+	if _, stderr, _ := runCmd(t, "決済API 5xx 14:05"); stderr != "" {
+		t.Errorf("stderr when opening it again by the typed name = %q, want nothing", stderr)
 	}
 }
 

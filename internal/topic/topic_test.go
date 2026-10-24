@@ -44,19 +44,28 @@ func TestRoot_AlwaysAbsolute(t *testing.T) {
 	})
 }
 
-func TestValidateName(t *testing.T) {
-	valid := []struct{ in, want string }{
-		{"Datadog Cost", "Datadog Cost"},
-		{"  調べ方を設計する  ", "調べ方を設計する"},
-		{"under_score and-dash", "under_score and-dash"},
-		{"what? (draft)", "what? (draft)"},
-		{"決済API 5xx  INC-0431", "決済API 5xx INC-0431"},
-		{"認証基盤\u3000選定", "認証基盤 選定"},
+func TestParseName(t *testing.T) {
+	valid := []struct{ in, title, slug string }{
+		{"決済API 5xx 14:05", "決済API 5xx 14:05", "決済API-5xx-14-05"},
+		{"認証基盤　選定", "認証基盤 選定", "認証基盤-選定"},
+		{"API Gateway vs. ALB", "API Gateway vs. ALB", "API-Gateway-vs.-ALB"},
+		{"C# 資産の扱い", "C# 資産の扱い", "C-資産の扱い"},
+		{"  決済API 5xx  INC-0431 ", "決済API 5xx INC-0431", "決済API-5xx-INC-0431"},
+		{"10/28 アーキ定例", "10/28 アーキ定例", "10-28-アーキ定例"},
+		{"what? (draft)", "what? (draft)", "what-draft"},
+		{`a\b*c<d>e"f'g$h&i;j{k}l!m~n` + "`o|p^q[r]", `a\b*c<d>e"f'g$h&i;j{k}l!m~n` + "`o|p^q[r]", "a-b-c-d-e-f-g-h-i-j-k-l-m-n-o-p-q-r"},
+		{"tab\there", "tab here", "tab-here"},
+		{".obsidian", ".obsidian", "obsidian"},
+		{"-- v2.40 --.", "-- v2.40 --.", "v2.40"},
+		{"under_score", "under_score", "under_score"},
+		{"Datadog", "Datadog", "Datadog"},
+		{"CONFIG", "CONFIG", "CONFIG"},
+		{"ゲートウェイ", "ゲートウェイ", "ゲートウェイ"}, // NFD in, NFC out
 	}
 	for _, c := range valid {
-		got, err := ValidateName(c.in)
-		if err != nil || got != c.want {
-			t.Errorf("ValidateName(%q) = %q, %v; want %q, nil", c.in, got, err, c.want)
+		got, err := ParseName(c.in)
+		if err != nil || got != (Name{Title: c.title, Slug: c.slug}) {
+			t.Errorf("ParseName(%q) = %+v, %v; want {%q %q}", c.in, got, err, c.title, c.slug)
 		}
 	}
 
@@ -66,31 +75,19 @@ func TestValidateName(t *testing.T) {
 	}{
 		{"", ErrEmptyName},
 		{"   ", ErrEmptyName},
-		{"a/b", ErrInvalidName},
-		{`a\b`, ErrInvalidName},
-		{"a:b", ErrInvalidName},
-		{"#tag", ErrInvalidName},
-		{"a^b", ErrInvalidName},
-		{"[x]", ErrInvalidName},
-		{"a|b", ErrInvalidName},
-		{".hidden", ErrInvalidName},
-		{"..", ErrInvalidName},
-		{"tab\there", ErrInvalidName},
+		{"???", ErrEmptyName},
+		{"..", ErrEmptyName},
+		{"-", ErrEmptyName},
+		{"CON", ErrInvalidName},
+		{"nul", ErrInvalidName},
+		{"COM1", ErrInvalidName},
+		{"lpt9.notes", ErrInvalidName},
+		{"AUX?", ErrInvalidName},
+		{"a\x01b", ErrInvalidName},
 	}
 	for _, c := range invalid {
-		if _, err := ValidateName(c.in); !errors.Is(err, c.want) {
-			t.Errorf("ValidateName(%q): err = %v, want %v", c.in, err, c.want)
-		}
-	}
-
-	for in, char := range map[string]string{
-		"決済API 5xx 14:05": `":"`,
-		"C# 資産":           `"#"`,
-		".obsidian":       `leading "."`,
-		"a\tb":            `"\t"`,
-	} {
-		if _, err := ValidateName(in); err == nil || !strings.Contains(err.Error(), char) {
-			t.Errorf("ValidateName(%q): err = %v, want it to name %s", in, err, char)
+		if _, err := ParseName(c.in); !errors.Is(err, c.want) {
+			t.Errorf("ParseName(%q): err = %v, want %v", c.in, err, c.want)
 		}
 	}
 }
@@ -164,20 +161,20 @@ func TestCreate(t *testing.T) {
 	root := t.TempDir()
 	now := time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC)
 
-	tp, err := Create(root, "  調べ方を 設計する  ", now)
+	tp, err := Create(root, "  調べ方を  設計する  ", now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if tp.DirName != "2026-10-24-調べ方を 設計する" || tp.Name != "調べ方を 設計する" || tp.Date != "2026-10-24" {
-		t.Errorf("Create = %+v, want DirName=2026-10-24-調べ方を 設計する Name=調べ方を 設計する", tp)
+	if tp.DirName != "2026-10-24-調べ方を-設計する" || tp.Name != "調べ方を-設計する" || tp.Date != "2026-10-24" {
+		t.Errorf("Create = %+v, want DirName=2026-10-24-調べ方を-設計する Name=調べ方を-設計する", tp)
 	}
 
-	note, err := os.ReadFile(filepath.Join(root, "2026-10-24-調べ方を 設計する", "調べ方を 設計する.md"))
+	note, err := os.ReadFile(filepath.Join(root, "2026-10-24-調べ方を-設計する", "調べ方を-設計する.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if string(note) != "# 調べ方を 設計する\n" {
-		t.Errorf("main note = %q, want just the H1", note)
+		t.Errorf("main note = %q, want just the H1, spelled as typed", note)
 	}
 
 	entries, err := os.ReadDir(tp.Path)
@@ -216,8 +213,8 @@ func TestCreate_KeepsExistingNote(t *testing.T) {
 
 func TestCreate_InvalidName(t *testing.T) {
 	root := t.TempDir()
-	if _, err := Create(root, "a/b", time.Now()); !errors.Is(err, ErrInvalidName) {
-		t.Errorf("Create(a/b): err = %v, want ErrInvalidName", err)
+	if _, err := Create(root, "CON", time.Now()); !errors.Is(err, ErrInvalidName) {
+		t.Errorf("Create(CON): err = %v, want ErrInvalidName", err)
 	}
 	entries, err := os.ReadDir(root)
 	if err != nil {
@@ -331,7 +328,7 @@ func TestResolve_NoMatchCreates(t *testing.T) {
 
 func TestResolve_InvalidName(t *testing.T) {
 	root := t.TempDir()
-	for _, arg := range []string{"   ", "a/b", ".hidden"} {
+	for _, arg := range []string{"   ", "#?!", "nul"} {
 		if _, _, err := Resolve(root, arg); err == nil {
 			t.Errorf("Resolve(%q) succeeded, want a name error", arg)
 		}
@@ -430,17 +427,26 @@ func TestResolve_IgnoresCaseSpacesAndSeparators(t *testing.T) {
 	}
 }
 
-func TestResolve_SeparatorOnlyNameDoesNotMatchEverything(t *testing.T) {
+// TestResolve_FindsExistingNamesSpelledDifferently: topics made before names
+// were rewritten keep their spaces and symbols, and macOS tools can store a
+// name decomposed (NFD). Typing either name the usual way must open them, not
+// create a twin.
+func TestResolve_FindsExistingNamesSpelledDifferently(t *testing.T) {
 	root := t.TempDir()
-	if _, err := Create(root, "alpha", time.Now()); err != nil {
-		t.Fatal(err)
-	}
-	matches, created, err := Resolve(root, "-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !created || len(matches) != 1 || matches[0].Name != "-" {
-		t.Errorf("Resolve(\"-\") = %+v (created=%v), want a new topic named -", matches, created)
+	mkdirs(t, root, "2026-01-01-what? (draft)", "2026-01-02-ゲートウェイ")
+
+	for arg, want := range map[string]string{
+		"what? (draft)": "2026-01-01-what? (draft)",
+		"what-draft":    "2026-01-01-what? (draft)",
+		"ゲートウェイ":        "2026-01-02-ゲートウェイ",
+	} {
+		matches, created, err := Resolve(root, arg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if created || len(matches) != 1 || matches[0].DirName != want {
+			t.Errorf("Resolve(%q) = %+v (created=%v), want only %s", arg, matches, created, want)
+		}
 	}
 }
 
@@ -469,7 +475,7 @@ func TestNew_CreatesDespitePartialMatch(t *testing.T) {
 		t.Errorf("New on an existing name = %+v (created=%v), want the existing %s", again, created, meeting.DirName)
 	}
 
-	if _, _, err := New(root, "a:b"); !errors.Is(err, ErrInvalidName) {
-		t.Errorf("New(a:b): err = %v, want ErrInvalidName", err)
+	if _, _, err := New(root, "PRN"); !errors.Is(err, ErrInvalidName) {
+		t.Errorf("New(PRN): err = %v, want ErrInvalidName", err)
 	}
 }
