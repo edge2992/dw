@@ -60,7 +60,10 @@ func TestParseName(t *testing.T) {
 		{"under_score", "under_score", "under_score"},
 		{"Datadog", "Datadog", "Datadog"},
 		{"CONFIG", "CONFIG", "CONFIG"},
-		{"ゲートウェイ", "ゲートウェイ", "ゲートウェイ"}, // NFD in, NFC out
+		{"foo\u200b", "foo\u200b", "foo"},
+		{"x\u202eyz", "x\u202eyz", "x-yz"},
+		{"???", "???", ""},
+		{"\u30b1\u3099ートウェイ", "ゲートウェイ", "ゲートウェイ"}, // NFD in, NFC out
 	}
 	for _, c := range valid {
 		got, err := ParseName(c.in)
@@ -75,14 +78,6 @@ func TestParseName(t *testing.T) {
 	}{
 		{"", ErrEmptyName},
 		{"   ", ErrEmptyName},
-		{"???", ErrEmptyName},
-		{"..", ErrEmptyName},
-		{"-", ErrEmptyName},
-		{"CON", ErrInvalidName},
-		{"nul", ErrInvalidName},
-		{"COM1", ErrInvalidName},
-		{"lpt9.notes", ErrInvalidName},
-		{"AUX?", ErrInvalidName},
 		{"a\x01b", ErrInvalidName},
 	}
 	for _, c := range invalid {
@@ -213,15 +208,27 @@ func TestCreate_KeepsExistingNote(t *testing.T) {
 
 func TestCreate_InvalidName(t *testing.T) {
 	root := t.TempDir()
-	if _, err := Create(root, "CON", time.Now()); !errors.Is(err, ErrInvalidName) {
-		t.Errorf("Create(CON): err = %v, want ErrInvalidName", err)
+	for in, want := range map[string]error{
+		"???":        ErrEmptyName,
+		"..":         ErrEmptyName,
+		"-":          ErrEmptyName,
+		"CON":        ErrInvalidName,
+		"nul":        ErrInvalidName,
+		"COM1":       ErrInvalidName,
+		"COM\u00b9":  ErrInvalidName,
+		"lpt9.notes": ErrInvalidName,
+		"AUX?":       ErrInvalidName,
+	} {
+		if _, err := Create(root, in, time.Now()); !errors.Is(err, want) {
+			t.Errorf("Create(%q): err = %v, want %v", in, err, want)
+		}
 	}
 	entries, err := os.ReadDir(root)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(entries) != 0 {
-		t.Errorf("root holds %d entries after a rejected name, want 0", len(entries))
+		t.Errorf("root holds %d entries after rejected names, want 0", len(entries))
 	}
 }
 
@@ -430,22 +437,26 @@ func TestResolve_IgnoresCaseSpacesAndSeparators(t *testing.T) {
 // TestResolve_FindsExistingNamesSpelledDifferently: topics made before names
 // were rewritten keep their spaces and symbols, and macOS tools can store a
 // name decomposed (NFD). Typing either name the usual way must open them, not
-// create a twin.
+// create a twin, even when the name is one a new topic could not take.
 func TestResolve_FindsExistingNamesSpelledDifferently(t *testing.T) {
 	root := t.TempDir()
-	mkdirs(t, root, "2026-01-01-what? (draft)", "2026-01-02-ゲートウェイ")
+	mkdirs(t, root, "2026-01-01-what? (draft)", "2026-01-02-\u30b1\u3099ートウェイ",
+		"2026-01-03-API Gateway vs.", "2026-01-04-API Gateway vs ALB", "2026-01-05-CON", "2026-01-06-!!!")
 
 	for arg, want := range map[string]string{
-		"what? (draft)": "2026-01-01-what? (draft)",
-		"what-draft":    "2026-01-01-what? (draft)",
-		"ゲートウェイ":        "2026-01-02-ゲートウェイ",
+		"what? (draft)":   "2026-01-01-what? (draft)",
+		"what-draft":      "2026-01-01-what? (draft)",
+		"ゲートウェイ":          "2026-01-02-\u30b1\u3099ートウェイ",
+		"API Gateway vs.": "2026-01-03-API Gateway vs.",
+		"CON":             "2026-01-05-CON",
+		"!!!":             "2026-01-06-!!!",
 	} {
 		matches, created, err := Resolve(root, arg)
-		if err != nil {
-			t.Fatal(err)
+		if err != nil || created || len(matches) != 1 || matches[0].DirName != want {
+			t.Errorf("Resolve(%q) = %+v (created=%v, err=%v), want only %s", arg, matches, created, err, want)
 		}
-		if created || len(matches) != 1 || matches[0].DirName != want {
-			t.Errorf("Resolve(%q) = %+v (created=%v), want only %s", arg, matches, created, want)
+		if tp, created, err := New(root, arg); err != nil || created || tp.DirName != want {
+			t.Errorf("New(%q) = %+v (created=%v, err=%v), want %s", arg, tp, created, err, want)
 		}
 	}
 }

@@ -54,7 +54,7 @@ const replacedChars = "/\\:#^[]|?*<>\"'$&;(){}!~`"
 
 // windowsReserved matches the names Windows refuses as a file name, with or
 // without an extension, so CON.md could never be created there.
-var windowsReserved = regexp.MustCompile(`(?i)^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\.|$)`)
+var windowsReserved = regexp.MustCompile(`(?i)^(con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])(\.|$)`)
 
 // Root returns the topic root: $DW_ROOT if set, else ~/dw. There is no
 // config file — this environment variable is the only knob.
@@ -83,12 +83,16 @@ type Name struct {
 }
 
 // ParseName turns what the user typed into a Name. The Slug is safe to type
-// unquoted in a shell and to link from Obsidian: each run of spaces and
-// replacedChars becomes one "-", and leading or trailing "-" and "." are
+// unquoted in a shell and to link from Obsidian: each run of spaces,
+// replacedChars and invisible format characters (zero-width space, bidi
+// overrides) becomes one "-", and leading or trailing "-" and "." are
 // dropped. Case, Japanese and a "." inside the name (vs., v2.40) are kept.
 //
 // Everything is NFC first, so a name some macOS tool stored decomposed (NFD)
 // is the same name as the one typed normally.
+//
+// The Slug may still be one no new topic can take (see creatable): an older
+// topic named "CON" or "!!!" has to stay reachable by name.
 func ParseName(s string) (Name, error) {
 	title := strings.Join(strings.Fields(norm.NFC.String(s)), " ")
 	if i := strings.IndexFunc(title, unicode.IsControl); i >= 0 {
@@ -98,29 +102,36 @@ func ParseName(s string) (Name, error) {
 		return Name{}, ErrEmptyName
 	}
 	slug := strings.Trim(strings.Join(strings.FieldsFunc(title, isSeparator), "-"), "-.")
-	if slug == "" {
-		return Name{}, fmt.Errorf("%w once symbols are replaced (got %q)", ErrEmptyName, title)
-	}
-	if windowsReserved.MatchString(slug) {
-		return Name{}, fmt.Errorf("%w: %q is reserved on Windows", ErrInvalidName, slug)
-	}
 	return Name{Title: title, Slug: slug}, nil
 }
 
-func isSeparator(r rune) bool {
-	return unicode.IsSpace(r) || r == '-' || strings.ContainsRune(replacedChars, r)
+// creatable reports why no new topic can be named n.Slug, before anything is
+// written.
+func creatable(n Name) error {
+	if n.Slug == "" {
+		return fmt.Errorf("%w once symbols are replaced (got %q)", ErrEmptyName, n.Title)
+	}
+	if windowsReserved.MatchString(n.Slug) {
+		return fmt.Errorf("%w: %q is reserved on Windows", ErrInvalidName, n.Slug)
+	}
+	return nil
 }
 
-// matchKey is what names are compared by: case, "_" and every separator are
-// ignored, so "Datadog Cost" finds a topic made as "datadog-cost", and a name
-// typed with symbols finds the topic its Slug was made into.
+func isSeparator(r rune) bool {
+	return unicode.IsSpace(r) || r == '-' || unicode.Is(unicode.Cf, r) || strings.ContainsRune(replacedChars, r)
+}
+
+// matchKey is what names are compared by: case, "_", every separator and
+// leading or trailing "." are ignored, so "Datadog Cost" finds a topic made
+// as "datadog-cost", and a name typed with symbols finds the topic its Slug
+// was made into.
 func matchKey(s string) string {
-	return strings.Map(func(r rune) rune {
+	return strings.Trim(strings.Map(func(r rune) rune {
 		if isSeparator(r) || r == '_' {
 			return -1
 		}
 		return unicode.ToLower(r)
-	}, norm.NFC.String(s))
+	}, norm.NFC.String(s)), ".")
 }
 
 // parseTopic builds a Topic from a directory name found directly under root.
@@ -185,6 +196,9 @@ func Create(root, rawName string, now time.Time) (Topic, error) {
 }
 
 func create(root string, name Name, now time.Time) (Topic, error) {
+	if err := creatable(name); err != nil {
+		return Topic{}, err
+	}
 	dirName := now.Format("2006-01-02") + "-" + name.Slug
 	t := parseTopic(dirName, filepath.Join(root, dirName))
 	if err := os.MkdirAll(t.Path, 0o755); err != nil {
