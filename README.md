@@ -19,10 +19,10 @@ Some ideas are a passing thought; others turn into projects that run for months,
 
 - **One topic, one directory** — `<root>/<YYYY-MM-DD>-<name>/<name>.md`. The main note shares the topic's name, so it's easy to tell apart in Obsidian's quick switcher and links.
 - **Only the name is required** — no categories, statuses, or templates. The main note starts as a single `# <name>` line.
-- **Names stay as you typed them** — Japanese, spaces, and capitals are kept. A character that would break a path or an Obsidian link (`/ \ : # ^ [ ] |`, a leading `.`) is an error, never a silent rewrite.
+- **Names stay as you typed them** — Japanese, spaces, and capitals are kept; only a run of spaces (full-width included) collapses to one. A character that would break a path or an Obsidian link (`/ \ : # ^ [ ] |`, a leading `.`) is an error naming that character, never a silent rewrite.
 - **The filesystem is the source of truth** — `dw` lists whatever directories sit under the root. Topics made by hand in Obsidian show up too; there's no index to keep in sync.
-- **One command, no modes** — `dw` always opens an `fzf` picker. Type to filter, or keep typing past the last match and `enter` creates that topic.
-- **Resume by default** — the last topic you visited is pinned to the top.
+- **One picker** — `dw` always opens an `fzf` picker. Type to filter, or keep typing past the last match and `enter` creates that topic. When what you type is part of an existing name (a recurring incident, an umbrella topic), `ctrl-o` creates it anyway.
+- **Resume by default** — the five topics you visited most recently are pinned to the top, so a long-running topic doesn't sink under a day of short ones.
 - **Zero config, zero dependencies** — one environment variable (`DW_ROOT`) and the Go standard library only.
 
 See [docs/concepts.md](docs/concepts.md) for the reasoning and [GLOSSARY.md](GLOSSARY.md) for the vocabulary.
@@ -51,11 +51,12 @@ eval "$(dw init zsh)"   # or: dw init bash
 The wrapper:
 
 1. Runs `command dw` and captures the TSV rows.
-2. Hands them to `fzf`, every time. The path column is hidden, the preview shows the main note (or the directory listing for a topic without one), and `dw <name>` arrives as `--query=<name>`.
-3. On `enter` over a row, re-resolves that path through `command dw` (so it becomes the last-visited topic) and `cd`s into it.
-4. If nothing matched what you typed, hands the query to `command dw`, which matches it ignoring case and creates the topic only if that misses too.
+2. Hands them to `fzf`, every time. The path column is hidden, and `dw <name>` arrives as `--query=<name>`. The preview shows the head of the main note (or of `README.md` or `STATE.md` for older topics without one), then the files in the topic.
+3. On `enter` over a row, re-resolves that path through `command dw` (so it becomes the most recent visit) and `cd`s into it.
+4. If nothing matched what you typed, hands the query to `command dw`, which matches it ignoring case, spaces, `-` and `_`, and creates the topic only if that misses too.
+5. On `ctrl-o`, hands the query to `command dw new`, which creates a topic with exactly that name even if it is part of an existing one. Only an exact name match opens instead.
 
-So the picker never dead-ends: `enter` on a match opens it, `enter` on no match creates it, `esc` does nothing.
+So the picker never dead-ends: `enter` on a match opens it, `enter` on no match creates it, `ctrl-o` creates what you typed, `esc` does nothing. Every new topic is announced as `dw: created <path>`.
 
 Without `fzf`, or outside a terminal, the wrapper resolves your arguments directly and prints the candidates if there's more than one.
 
@@ -68,8 +69,9 @@ dw 調べ方                # same picker, pre-filtered
 
 | Command               | Description                                                                                                         |
 | --------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| `dw`                  | Open the picker over every topic, last visited pinned first.                                                        |
+| `dw`                  | Open the picker over every topic, recently visited pinned first.                                                    |
 | `dw <name>`           | Open the picker with `<name>` pre-typed. Without shell integration: exact match, else partial match(es), else create. |
+| `dw new <name>`       | Create `<name>` and `cd` into it, even when it is part of an existing name. An exact match opens instead.          |
 | `dw init <zsh\|bash>` | Print the shell function that wires `dw` into `fzf` and `cd`.                                                       |
 | `dw version`          | Print the version.                                                                                                  |
 | `dw help`             | Show usage, including the resolved `DW_ROOT`.                                                                       |
@@ -80,7 +82,7 @@ dw 調べ方                # same picker, pre-filtered
 <absolute path>\t<marker + directory name>
 ```
 
-The marker is `* ` for the last-visited topic and two spaces otherwise. Diagnostics go to stderr. An invalid or empty name exits 2 and creates nothing. Names match against the topic name (the directory name minus its date), ignoring case: exact matches first, then substrings.
+The marker is `* ` for the most recently visited topic and two spaces otherwise. Diagnostics go to stderr, including `dw: created <path>` whenever a topic is made. An invalid or empty name exits 2 and creates nothing. Names match against the topic name (the directory name minus its date), ignoring case, spaces, `-` and `_`: exact matches first, then substrings. Any `command dw <name>` that settles on one topic counts as a visit.
 
 ### What `dw` creates
 
@@ -91,7 +93,14 @@ The marker is `* ` for the last-visited topic and two spaces otherwise. Diagnost
 
 That's all. Add `logs/`, `sources/`, images, or more notes whenever a topic needs them; `dw` doesn't look at them. It never writes into a topic that already exists.
 
-Topics are listed newest date first. Directories without a date prefix (say, `読書を続ける/` made in Obsidian) are topics too, with the whole directory name as their topic name, and come last.
+Topics are listed newest date first. Directories without a date prefix (say, `読書を続ける/` made in Obsidian) are topics too, with the whole directory name as their topic name, and come last. Every directory directly under the root is a topic, so keep anything else (an attachments folder, say) outside it or give it a name starting with `.`.
+
+A topic that has grown html, txt, or other notes reads best when its main note links to them. A topic from an older `dw` or made by hand gets a main note the moment you add `<name>.md` to it; `dw` never adds one for you.
+
+### Known limits
+
+- Names written in decomposed Unicode (NFD, which some macOS tools produce for kana with dakuten such as `ゲ`) don't match the same name typed normally. Normalizing them needs a dependency outside the standard library.
+- bash, and zsh with `interactive_comments`, treat an unquoted ` #` as the start of a comment, so `dw 決済API #123` drops `#123` before `dw` sees it. `#` isn't allowed in names anyway; quote the name to get the error instead.
 
 ## Configuration
 

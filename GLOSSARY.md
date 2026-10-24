@@ -13,13 +13,13 @@ A directory directly under the root that holds everything about one subject, whe
 _Avoid_: workspace, project, discussion
 
 **Topic name**:
-The topic's directory name with the leading `YYYY-MM-DD-` creation date removed, written exactly as the user typed it. Topic names are unique within the root.
+The topic's directory name with the leading `YYYY-MM-DD-` creation date removed, written as the user typed it except that runs of spaces collapse to one. Topic names are unique within the root, compared ignoring case, spaces, `-` and `_`.
 _Avoid_: slug, title
 
 **Main note**:
 The Markdown file inside a topic that has the same name as the topic (`<topic name>.md`), and the entry point to it.
 _Avoid_: STATE.md, README, index
 
-**Last visited**:
-The topic most recently opened through dw, pinned to the top of the picker.
-_Avoid_: current topic, active topic
+**Recent topics**:
+The five topics most recently opened through dw, pinned to the top of the picker. The newest is marked with `*`.
+_Avoid_: last visited, current topic, active topic
