@@ -1,4 +1,4 @@
-module github.com/edge2992/dw
+module github.com/edge2992/dw/v2
 
 go 1.26.4
 

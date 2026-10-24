@@ -30,7 +30,7 @@ See [docs/concepts.md](docs/concepts.md) for the reasoning and [GLOSSARY.md](GLO
 ## Install
 
 ```sh
-go install github.com/edge2992/dw@latest
+go install github.com/edge2992/dw/v2@latest
 ```
 
 Don't use Go? Grab a prebuilt binary for your OS/arch from the

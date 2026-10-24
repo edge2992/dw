@@ -15,7 +15,7 @@ import (
 	"runtime/debug"
 	"strings"
 
-	"github.com/edge2992/dw/internal/topic"
+	"github.com/edge2992/dw/v2/internal/topic"
 )
 
 // version is the build version, injected via -ldflags at release time
