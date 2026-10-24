@@ -51,7 +51,7 @@ eval "$(dw init zsh)"   # or: dw init bash
 The wrapper:
 
 1. Runs `command dw` and captures the TSV rows.
-2. Hands them to `fzf`, every time. The path column is hidden, and `dw <name>` arrives as `--query=<name>`. The preview shows the head of the main note (or of `README.md` or `STATE.md` for older topics without one), then the files in the topic.
+2. Hands them to `fzf`, every time. The path column is hidden, and `dw <name>` arrives as `--query=<name>`. The preview shows the files in the topic on one line, then the head of the main note (or of `README.md` or `STATE.md` for older topics without one).
 3. On `enter` over a row, re-resolves that path through `command dw` (so it becomes the most recent visit) and `cd`s into it.
 4. If nothing matched what you typed, hands the query to `command dw`, which matches it ignoring case, spaces, `-` and `_`, and creates the topic only if that misses too.
 5. On `ctrl-o`, hands the query to `command dw new`, which creates a topic with exactly that name even if it is part of an existing one. Only an exact name match opens instead.
@@ -101,6 +101,18 @@ A topic that has grown html, txt, or other notes reads best when its main note l
 
 - Names written in decomposed Unicode (NFD, which some macOS tools produce for kana with dakuten such as `ゲ`) don't match the same name typed normally. Normalizing them needs a dependency outside the standard library.
 - bash, and zsh with `interactive_comments`, treat an unquoted ` #` as the start of a comment, so `dw 決済API #123` drops `#123` before `dw` sees it. `#` isn't allowed in names anyway; quote the name to get the error instead.
+
+### With Claude Code
+
+The usual loop is `dw <name>`, then `claude` in the topic, and `dw` again the next day to pick it back up. `dw` stops at the `cd`; it never launches `claude` and never writes a `CLAUDE.md`.
+
+Left alone, Claude doesn't know what the main note is for. Asked to "save where we got to", it tends to start a new file such as `結論.md` and leave `<name>.md` as a bare heading, so the picker's preview shows nothing of the discussion. A `CLAUDE.md` you write once at the root fixes that. `dw` lists only directories, so the file never shows up as a topic:
+
+```markdown
+Each directory here is a topic. Its main note is `<directory name without the YYYY-MM-DD- prefix>.md`. Write conclusions, current status, and links to other files in the topic into that main note, not into a new file.
+```
+
+Claude Code keeps sessions and auto memory per directory, in a folder named after the path with every non-ASCII character turned into `-`. Two topics created on the same day whose names differ only in Japanese characters of the same length, such as `ジョブ基盤 選定` and `帳票サーバ 選定`, therefore share one folder. `claude --continue` and `--resume` still pick sessions by the exact directory, but auto memory is shared, so notes from one topic can surface in the other.
 
 ## Configuration
 
