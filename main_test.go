@@ -53,7 +53,7 @@ func pretendTerminal(t *testing.T) {
 }
 
 // TestRun_EmptyRootHintsInsteadOfSayingNothing is the first-run case: bare dw
-// with no workspaces used to print nothing at all and exit 0, which reads as a
+// with no topics used to print nothing at all and exit 0, which reads as a
 // broken install.
 func TestRun_EmptyRootHintsInsteadOfSayingNothing(t *testing.T) {
 	root := setup(t)
@@ -69,8 +69,8 @@ func TestRun_EmptyRootHintsInsteadOfSayingNothing(t *testing.T) {
 	if !strings.Contains(stderr, root) {
 		t.Errorf("stderr = %q, want it to name the root %q", stderr, root)
 	}
-	if !strings.Contains(stderr, "dw <topic>") {
-		t.Errorf("stderr = %q, want it to show how to create the first workspace", stderr)
+	if !strings.Contains(stderr, "dw <name>") {
+		t.Errorf("stderr = %q, want it to show how to create the first topic", stderr)
 	}
 }
 
@@ -86,7 +86,7 @@ func TestRun_RawTSVHintsAtShellIntegration(t *testing.T) {
 
 	stdout, stderr, _ := runCmd(t)
 	if !strings.Contains(stdout, "alpha") {
-		t.Fatalf("stdout = %q, want the workspace row", stdout)
+		t.Fatalf("stdout = %q, want the topic row", stdout)
 	}
 	if !strings.Contains(stderr, "dw init zsh") {
 		t.Errorf("stderr = %q, want the shell-integration hint", stderr)
@@ -105,26 +105,26 @@ func TestRun_ResolveCreatesAndLists(t *testing.T) {
 		t.Fatalf("stdout = %q, want exactly one row", stdout)
 	}
 	cols := strings.Split(lines[0], "\t")
-	if len(cols) != 4 {
-		t.Fatalf("row %q, want 4 tab-separated columns", lines[0])
+	if len(cols) != 2 {
+		t.Fatalf("row %q, want 2 tab-separated columns", lines[0])
 	}
-	if !strings.HasPrefix(cols[0], root) {
-		t.Errorf("path column %q is not under root %q", cols[0], root)
+	if filepath.Dir(cols[0]) != root || !strings.HasSuffix(cols[0], "-Datadog Cost") {
+		t.Errorf("path column %q, want <root>/<date>-Datadog Cost", cols[0])
 	}
-	if cols[1] != "* Datadog Cost" {
-		t.Errorf("marker+title column = %q, want %q (freshly resolved workspace becomes \"last\")", cols[1], "* Datadog Cost")
+	if cols[1] != "* "+filepath.Base(cols[0]) {
+		t.Errorf("marker+dir column = %q, want %q (freshly resolved topic becomes \"last\")", cols[1], "* "+filepath.Base(cols[0]))
 	}
-	if cols[3] != filepath.Base(cols[0]) {
-		t.Errorf("name column = %q, want the directory name %q", cols[3], filepath.Base(cols[0]))
+	if _, err := os.Stat(filepath.Join(cols[0], "Datadog Cost.md")); err != nil {
+		t.Errorf("main note missing: %v", err)
 	}
 
-	// A second bare `dw` should now list exactly that one workspace, pinned.
+	// A second bare `dw` should now list exactly that one topic, pinned.
 	stdout, _, code = runCmd(t)
 	if code != 0 {
 		t.Fatalf("code = %d, want 0", code)
 	}
-	if !strings.Contains(stdout, "* Datadog Cost") {
-		t.Errorf("listing after creation = %q, want it to contain the pinned marker+title", stdout)
+	if stdout != lines[0]+"\n" {
+		t.Errorf("listing after creation = %q, want the pinned row %q", stdout, lines[0])
 	}
 }
 
@@ -154,7 +154,7 @@ func TestRun_PartialMatchDoesNotCreate(t *testing.T) {
 		}
 	}
 	if dirs != 1 {
-		t.Errorf("root has %d workspace dirs after a resolving partial match, want 1 (no new workspace)", dirs)
+		t.Errorf("root has %d topic dirs after a resolving partial match, want 1 (no new topic)", dirs)
 	}
 }
 
@@ -176,11 +176,16 @@ func TestRun_MultipleMatches(t *testing.T) {
 	}
 }
 
-func TestRun_EmptyTopicExitsTwo(t *testing.T) {
-	setup(t)
-	_, stderr, code := runCmd(t, "   ")
-	if code != 2 {
-		t.Errorf("code = %d, want 2 (stderr: %s)", code, stderr)
+func TestRun_BadNameExitsTwo(t *testing.T) {
+	root := setup(t)
+	for _, name := range []string{"   ", "a/b", "[x]", ".hidden"} {
+		_, stderr, code := runCmd(t, name)
+		if code != 2 {
+			t.Errorf("dw %q: code = %d, want 2 (stderr: %s)", name, code, stderr)
+		}
+	}
+	if _, err := os.Stat(root); err == nil {
+		t.Error("a rejected name must not create anything, not even the root")
 	}
 }
 

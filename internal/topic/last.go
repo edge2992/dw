@@ -1,4 +1,4 @@
-package workspace
+package topic
 
 import (
 	"os"
@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-// statePath returns the file dw uses to remember the last chosen workspace
+// statePath returns the file dw uses to remember the last chosen topic
 // (e.g. ~/.cache/dw/last on Linux, ~/Library/Caches/dw/last on macOS).
 func statePath() string {
 	dir, err := os.UserCacheDir()
@@ -17,7 +17,7 @@ func statePath() string {
 	return filepath.Join(dir, "dw", "last")
 }
 
-// LastPath returns the most recently chosen workspace path, or "" if there is
+// LastPath returns the most recently chosen topic path, or "" if there is
 // none yet or the recorded directory no longer exists.
 func LastPath() string {
 	b, err := os.ReadFile(statePath())
@@ -34,7 +34,7 @@ func LastPath() string {
 	return p
 }
 
-// SaveLast records path as the most recently chosen workspace. Failures are
+// SaveLast records path as the most recently chosen topic. Failures are
 // returned but are non-fatal to callers — losing the "jump back" hint is benign.
 func SaveLast(path string) error {
 	f := statePath()
