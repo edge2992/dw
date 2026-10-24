@@ -19,18 +19,18 @@ Some ideas are a passing thought; others turn into projects that run for months,
 
 - **One topic, one directory** — `<root>/<YYYY-MM-DD>-<name>/<name>.md`. The main note shares the topic's name, so it's easy to tell apart in Obsidian's quick switcher and links.
 - **Only the name is required** — no categories, statuses, or templates. The main note starts as a single `# <name>` line.
-- **Names stay as you typed them** — Japanese, spaces, and capitals are kept; only a run of spaces (full-width included) collapses to one. A character that would break a path or an Obsidian link (`/ \ : # ^ [ ] |`, a leading `.`) is an error naming that character, never a silent rewrite.
+- **Names you can type in a shell** — the directory and the main note drop the spaces and symbols that break a shell word, a path, or an Obsidian link. Each run of spaces (full-width included) or of `/ \ : # ^ [ ] | ? * < > " ' $ & ; ( ) { } ! ~` and backtick becomes one `-`, and a leading or trailing `-` or `.` is dropped. Japanese, capitals and a `.` inside the name are kept, so `決済API 5xx 14:05` becomes `決済API-5xx-14-05`. `dw` prints the rewrite on stderr, and the main note's heading keeps the name as you typed it.
 - **The filesystem is the source of truth** — `dw` lists whatever directories sit under the root. Topics made by hand in Obsidian show up too; there's no index to keep in sync.
 - **One picker** — `dw` always opens an `fzf` picker. Type to filter, or keep typing past the last match and `enter` creates that topic. When what you type is part of an existing name (a recurring incident, an umbrella topic), `ctrl-o` creates it anyway.
 - **Resume by default** — the five topics you visited most recently are pinned to the top, so a long-running topic doesn't sink under a day of short ones.
-- **Zero config, zero dependencies** — one environment variable (`DW_ROOT`) and the Go standard library only.
+- **Zero config** — one environment variable (`DW_ROOT`). The only dependency is `golang.org/x/text`, for Unicode normalization.
 
 See [docs/concepts.md](docs/concepts.md) for the reasoning and [GLOSSARY.md](GLOSSARY.md) for the vocabulary.
 
 ## Install
 
 ```sh
-go install github.com/edge2992/dw@latest
+go install github.com/edge2992/dw/v2@latest
 ```
 
 Don't use Go? Grab a prebuilt binary for your OS/arch from the
@@ -82,13 +82,13 @@ dw 調べ方                # same picker, pre-filtered
 <absolute path>\t<marker + directory name>
 ```
 
-The marker is `* ` for the most recently visited topic and two spaces otherwise. Diagnostics go to stderr, including `dw: created <path>` whenever a topic is made. An invalid or empty name exits 2 and creates nothing. Names match against the topic name (the directory name minus its date), ignoring case, spaces, `-` and `_`: exact matches first, then substrings. Any `command dw <name>` that settles on one topic counts as a visit.
+The marker is `* ` for the most recently visited topic and two spaces otherwise. Diagnostics go to stderr, including `dw: created <path>` whenever a topic is made, preceded by `dw: "<as typed>" → <name>` when the name was rewritten. A name that is empty once rewritten, holds a control character, or is reserved on Windows (`CON`, `PRN`, `AUX`, `NUL`, `COM1`–`COM9`, `LPT1`–`LPT9`) exits 2 and creates nothing. Names are compared in Unicode NFC against the topic name (the directory name minus its date), ignoring case, spaces, `_` and the symbols above: exact matches first, then substrings. So `dw 決済API 5xx 14:05` opens `決済API-5xx-14-05`, and topics made by older versions with spaces in their names are still found. Any `command dw <name>` that settles on one topic counts as a visit.
 
 ### What `dw` creates
 
 ```text
 <root>/<YYYY-MM-DD>-<name>/
-  <name>.md          # main note: "# <name>"
+  <name>.md          # main note: "# <name as typed>"
 ```
 
 That's all. Add `logs/`, `sources/`, images, or more notes whenever a topic needs them; `dw` doesn't look at them. It never writes into a topic that already exists.
@@ -99,8 +99,7 @@ A topic that has grown html, txt, or other notes reads best when its main note l
 
 ### Known limits
 
-- Names written in decomposed Unicode (NFD, which some macOS tools produce for kana with dakuten such as `ゲ`) don't match the same name typed normally. Normalizing them needs a dependency outside the standard library.
-- bash, and zsh with `interactive_comments`, treat an unquoted ` #` as the start of a comment, so `dw 決済API #123` drops `#123` before `dw` sees it. `#` isn't allowed in names anyway; quote the name to get the error instead.
+- bash, and zsh with `interactive_comments`, treat an unquoted ` #` as the start of a comment, so `dw 決済API #123` drops `#123` before `dw` sees it. Quote the name to keep it; it becomes `決済API-123`.
 
 ### With Claude Code
 
@@ -112,7 +111,7 @@ Left alone, Claude doesn't know what the main note is for. Asked to "save where 
 Each directory here is a topic. Its main note is `<directory name without the YYYY-MM-DD- prefix>.md`. Write conclusions, current status, and links to other files in the topic into that main note, not into a new file.
 ```
 
-Claude Code keeps sessions and auto memory per directory, in a folder named after the path with every non-ASCII character turned into `-`. Two topics created on the same day whose names differ only in Japanese characters of the same length, such as `ジョブ基盤 選定` and `帳票サーバ 選定`, therefore share one folder. `claude --continue` and `--resume` still pick sessions by the exact directory, but auto memory is shared, so notes from one topic can surface in the other.
+Claude Code keeps sessions and auto memory per directory, in a folder named after the path with every non-ASCII character turned into `-`. Two topics created on the same day whose names differ only in Japanese characters of the same length, such as `ジョブ基盤-選定` and `帳票サーバ-選定`, therefore share one folder. `claude --continue` and `--resume` still pick sessions by the exact directory, but auto memory is shared, so notes from one topic can surface in the other.
 
 ## Configuration
 

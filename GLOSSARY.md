@@ -13,7 +13,7 @@ A directory directly under the root that holds everything about one subject, whe
 _Avoid_: workspace, project, discussion
 
 **Topic name**:
-The topic's directory name with the leading `YYYY-MM-DD-` creation date removed, written as the user typed it except that runs of spaces collapse to one. Topic names are unique within the root, compared ignoring case, spaces, `-` and `_`.
+The topic's directory name with the leading `YYYY-MM-DD-` creation date removed. For a new topic it is what the user typed in NFC, with each run of spaces and shell or link symbols turned into `-`. Topic names are unique within the root, compared in NFC ignoring case, spaces, `-`, `_` and those symbols. The main note's heading keeps the name as typed.
 _Avoid_: slug, title
 
 **Main note**:

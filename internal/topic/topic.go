@@ -14,6 +14,8 @@ import (
 	"strings"
 	"time"
 	"unicode"
+
+	"golang.org/x/text/unicode/norm"
 )
 
 // Topic is a single directory directly under the root.
@@ -32,21 +34,27 @@ func (t Topic) MainNote() string {
 
 var datePrefix = regexp.MustCompile(`^(\d{4}-\d{2}-\d{2})-(.*)$`)
 
-// ErrEmptyName is returned by Resolve and Create when the name is blank.
+// ErrEmptyName is returned by Resolve and Create when the name is blank, or
+// has nothing left once symbols are replaced.
 var ErrEmptyName = errors.New("topic name is empty")
 
-// ErrInvalidName is returned by Resolve and Create when the name contains a
-// character that would break the path or an Obsidian link to the main note.
-var ErrInvalidName = errors.New(`topic name must not start with "." or contain / \ : # ^ [ ] | or control characters`)
+// ErrInvalidName is returned by Resolve and Create when the name holds a
+// control character or is one Windows reserves (CON, NUL, COM1, …).
+var ErrInvalidName = errors.New("invalid topic name")
 
 // ErrNotFound is returned by Resolve when arg looks like an absolute path but
 // does not match any existing topic. Resolve never creates a directory at an
 // arbitrary absolute path, so this is the terminal outcome for that case.
 var ErrNotFound = errors.New("no topic found at that path")
 
-// forbiddenChars break either the filesystem path (/ \ :) or an Obsidian
-// [[link]] to the main note (# ^ [ ] |).
-const forbiddenChars = `/\:#^[]|`
+// replacedChars become "-" in a topic's directory and file name: each one
+// breaks a path on some OS, an Obsidian [[link]], or an unquoted shell word
+// (`dw 決済API #INC-0432` loses everything after the " #").
+const replacedChars = "/\\:#^[]|?*<>\"'$&;(){}!~`"
+
+// windowsReserved matches the names Windows refuses as a file name, with or
+// without an extension, so CON.md could never be created there.
+var windowsReserved = regexp.MustCompile(`(?i)^(con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])(\.|$)`)
 
 // Root returns the topic root: $DW_ROOT if set, else ~/dw. There is no
 // config file — this environment variable is the only knob.
@@ -68,41 +76,62 @@ func Root() string {
 	return r
 }
 
-// ValidateName returns s with each run of spaces (full-width included)
-// collapsed to one ASCII space and the ends trimmed. Otherwise the name the
-// user typed is the name they get, so a bad character is an error naming
-// that character rather than something silently rewritten.
-//
-// Spaces are the one exception because a stray double or full-width space is
-// invisible in a listing: left alone, it made a second topic that looked
-// identical to the first.
-func ValidateName(s string) (string, error) {
-	if i := strings.IndexFunc(s, unicode.IsControl); i >= 0 {
-		return "", fmt.Errorf("%w (found %q)", ErrInvalidName, string([]rune(s[i:])[0]))
-	}
-	name := strings.Join(strings.Fields(s), " ")
-	if name == "" {
-		return "", ErrEmptyName
-	}
-	if strings.HasPrefix(name, ".") {
-		return "", fmt.Errorf("%w (found a leading \".\")", ErrInvalidName)
-	}
-	if i := strings.IndexAny(name, forbiddenChars); i >= 0 {
-		return "", fmt.Errorf("%w (found %q)", ErrInvalidName, name[i:i+1])
-	}
-	return name, nil
+// Name is a topic name in the two forms dw needs.
+type Name struct {
+	Title string // as typed, in NFC with runs of spaces collapsed: the main note's H1
+	Slug  string // what the directory and the main note are named
 }
 
-// matchKey is what names are compared by: case, spaces, "-" and "_" are
-// ignored, so "Datadog Cost" finds a topic made as "datadog-cost" instead of
-// quietly creating a twin of it.
+// ParseName turns what the user typed into a Name. The Slug is safe to type
+// unquoted in a shell and to link from Obsidian: each run of spaces,
+// replacedChars and invisible format characters (zero-width space, bidi
+// overrides) becomes one "-", and leading or trailing "-" and "." are
+// dropped. Case, Japanese and a "." inside the name (vs., v2.40) are kept.
+//
+// Everything is NFC first, so a name some macOS tool stored decomposed (NFD)
+// is the same name as the one typed normally.
+//
+// The Slug may still be one no new topic can take (see creatable): an older
+// topic named "CON" or "!!!" has to stay reachable by name.
+func ParseName(s string) (Name, error) {
+	title := strings.Join(strings.Fields(norm.NFC.String(s)), " ")
+	if i := strings.IndexFunc(title, unicode.IsControl); i >= 0 {
+		return Name{}, fmt.Errorf("%w: control character %q", ErrInvalidName, []rune(title[i:])[0])
+	}
+	if title == "" {
+		return Name{}, ErrEmptyName
+	}
+	slug := strings.Trim(strings.Join(strings.FieldsFunc(title, isSeparator), "-"), "-.")
+	return Name{Title: title, Slug: slug}, nil
+}
+
+// creatable reports why no new topic can be named n.Slug, before anything is
+// written.
+func creatable(n Name) error {
+	if n.Slug == "" {
+		return fmt.Errorf("%w once symbols are replaced (got %q)", ErrEmptyName, n.Title)
+	}
+	if windowsReserved.MatchString(n.Slug) {
+		return fmt.Errorf("%w: %q is reserved on Windows", ErrInvalidName, n.Slug)
+	}
+	return nil
+}
+
+func isSeparator(r rune) bool {
+	return unicode.IsSpace(r) || r == '-' || unicode.Is(unicode.Cf, r) || strings.ContainsRune(replacedChars, r)
+}
+
+// matchKey is what names are compared by: case, "_", every separator and
+// leading or trailing "." are ignored, so "Datadog Cost" finds a topic made
+// as "datadog-cost", and a name typed with symbols finds the topic its Slug
+// was made into.
 func matchKey(s string) string {
-	return strings.Map(func(r rune) rune {
-		if unicode.IsSpace(r) || r == '-' || r == '_' {
+	return strings.Trim(strings.Map(func(r rune) rune {
+		if isSeparator(r) || r == '_' {
 			return -1
 		}
 		return unicode.ToLower(r)
-	}, s)
+	}, norm.NFC.String(s)), ".")
 }
 
 // parseTopic builds a Topic from a directory name found directly under root.
@@ -155,20 +184,27 @@ func sortTopics(ts []Topic) {
 	})
 }
 
-// Create makes <root>/<date>-<name>/<name>.md, the main note holding nothing
-// but the name as its H1. now supplies the date so callers/tests stay
+// Create makes <root>/<date>-<slug>/<slug>.md, the main note holding nothing
+// but the name's Title as its H1. now supplies the date so callers/tests stay
 // deterministic.
 func Create(root, rawName string, now time.Time) (Topic, error) {
-	name, err := ValidateName(rawName)
+	name, err := ParseName(rawName)
 	if err != nil {
 		return Topic{}, err
 	}
-	dirName := now.Format("2006-01-02") + "-" + name
+	return create(root, name, now)
+}
+
+func create(root string, name Name, now time.Time) (Topic, error) {
+	if err := creatable(name); err != nil {
+		return Topic{}, err
+	}
+	dirName := now.Format("2006-01-02") + "-" + name.Slug
 	t := parseTopic(dirName, filepath.Join(root, dirName))
 	if err := os.MkdirAll(t.Path, 0o755); err != nil {
 		return Topic{}, err
 	}
-	if _, err := writeIfAbsent(t.MainNote(), "# "+name+"\n", 0o644); err != nil {
+	if _, err := writeIfAbsent(t.MainNote(), "# "+name.Title+"\n", 0o644); err != nil {
 		return Topic{}, err
 	}
 	return t, nil
@@ -213,7 +249,7 @@ func Resolve(root, arg string) (matches []Topic, created bool, err error) {
 		return []Topic{t}, false, nil
 	}
 
-	query := matchKey(name)
+	query := matchKey(name.Slug)
 	var partial []Topic
 	for _, t := range topics {
 		if query != "" && strings.Contains(matchKey(t.Name), query) {
@@ -224,7 +260,7 @@ func Resolve(root, arg string) (matches []Topic, created bool, err error) {
 		return partial, false, nil // already ordered by Scan
 	}
 
-	t, err := Create(root, name, time.Now())
+	t, err := create(root, name, time.Now())
 	if err != nil {
 		return nil, false, err
 	}
@@ -244,21 +280,21 @@ func New(root, arg string) (t Topic, created bool, err error) {
 	if t, ok := findExact(topics, name); ok {
 		return t, false, nil
 	}
-	t, err = Create(root, name, time.Now())
+	t, err = create(root, name, time.Now())
 	return t, err == nil, err
 }
 
-func validateAndScan(root, arg string) (string, []Topic, error) {
-	name, err := ValidateName(arg)
+func validateAndScan(root, arg string) (Name, []Topic, error) {
+	name, err := ParseName(arg)
 	if err != nil {
-		return "", nil, err
+		return Name{}, nil, err
 	}
 	topics, err := Scan(root)
 	return name, topics, err
 }
 
-func findExact(topics []Topic, name string) (Topic, bool) {
-	key := matchKey(name)
+func findExact(topics []Topic, name Name) (Topic, bool) {
+	key := matchKey(name.Slug)
 	for _, t := range topics {
 		if matchKey(t.Name) == key || matchKey(t.DirName) == key {
 			return t, true
