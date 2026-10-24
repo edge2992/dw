@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -49,6 +50,8 @@ func TestValidateName(t *testing.T) {
 		{"  調べ方を設計する  ", "調べ方を設計する"},
 		{"under_score and-dash", "under_score and-dash"},
 		{"what? (draft)", "what? (draft)"},
+		{"決済API 5xx  INC-0431", "決済API 5xx INC-0431"},
+		{"認証基盤\u3000選定", "認証基盤 選定"},
 	}
 	for _, c := range valid {
 		got, err := ValidateName(c.in)
@@ -77,6 +80,17 @@ func TestValidateName(t *testing.T) {
 	for _, c := range invalid {
 		if _, err := ValidateName(c.in); !errors.Is(err, c.want) {
 			t.Errorf("ValidateName(%q): err = %v, want %v", c.in, err, c.want)
+		}
+	}
+
+	for in, char := range map[string]string{
+		"決済API 5xx 14:05": `":"`,
+		"C# 資産":           `"#"`,
+		".obsidian":       `leading "."`,
+		"a\tb":            `"\t"`,
+	} {
+		if _, err := ValidateName(in); err == nil || !strings.Contains(err.Error(), char) {
+			t.Errorf("ValidateName(%q): err = %v, want it to name %s", in, err, char)
 		}
 	}
 }
@@ -366,13 +380,96 @@ func TestTSVRow(t *testing.T) {
 	}
 }
 
-func TestPinLast(t *testing.T) {
-	ts := []Topic{{Path: "/a"}, {Path: "/b"}, {Path: "/c"}}
-	got := PinLast(ts, "/c")
-	if got[0].Path != "/c" || got[1].Path != "/a" || got[2].Path != "/b" {
-		t.Errorf("PinLast(/c) = %+v, want c, a, b", got)
+func TestPinRecent(t *testing.T) {
+	ts := []Topic{{Path: "/a"}, {Path: "/b"}, {Path: "/c"}, {Path: "/d"}}
+	paths := func(ts []Topic) string {
+		var s []string
+		for _, t := range ts {
+			s = append(s, t.Path)
+		}
+		return strings.Join(s, ",")
 	}
-	if got := PinLast(ts, "/missing"); got[0].Path != "/a" {
-		t.Errorf("PinLast with an unknown path reordered: %+v", got)
+	if got, want := paths(PinRecent(ts, []string{"/c", "/missing", "/a"})), "/c,/a,/b,/d"; got != want {
+		t.Errorf("PinRecent = %s, want %s (recent first in recent's order, the rest as they were)", got, want)
+	}
+	if got, want := paths(PinRecent(ts, nil)), "/a,/b,/c,/d"; got != want {
+		t.Errorf("PinRecent with nothing recent = %s, want %s", got, want)
+	}
+}
+
+// TestResolve_IgnoresCaseSpacesAndSeparators covers the duplicates the
+// dogfooding runs made by accident: an old slug typed back as words, a
+// missing space, a full-width space.
+func TestResolve_IgnoresCaseSpacesAndSeparators(t *testing.T) {
+	root := t.TempDir()
+	now := time.Now()
+	slug, err := Create(root, "datadog-cost", now.AddDate(0, 0, -30))
+	if err != nil {
+		t.Fatal(err)
+	}
+	spaced, err := Create(root, "認証基盤 選定", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for arg, want := range map[string]string{
+		"Datadog Cost": slug.Path,
+		"datadog_cost": slug.Path,
+		"認証基盤選定":       spaced.Path,
+		"認証基盤　選定":      spaced.Path,
+		"認証基盤   選定":    spaced.Path,
+		"DATADOG  co":  slug.Path, // partial
+	} {
+		matches, created, err := Resolve(root, arg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if created || len(matches) != 1 || matches[0].Path != want {
+			t.Errorf("Resolve(%q) = %+v (created=%v), want only %s", arg, matches, created, filepath.Base(want))
+		}
+	}
+}
+
+func TestResolve_SeparatorOnlyNameDoesNotMatchEverything(t *testing.T) {
+	root := t.TempDir()
+	if _, err := Create(root, "alpha", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	matches, created, err := Resolve(root, "-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !created || len(matches) != 1 || matches[0].Name != "-" {
+		t.Errorf("Resolve(\"-\") = %+v (created=%v), want a new topic named -", matches, created)
+	}
+}
+
+// TestNew_CreatesDespitePartialMatch is the umbrella-topic case: Resolve can
+// never create a name that is part of an existing one, New can.
+func TestNew_CreatesDespitePartialMatch(t *testing.T) {
+	root := t.TempDir()
+	meeting, err := Create(root, "アーキ定例 10-28", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	umbrella, created, err := New(root, "アーキ定例")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !created || umbrella.Name != "アーキ定例" {
+		t.Errorf("New(アーキ定例) = %+v (created=%v), want a new umbrella topic", umbrella, created)
+	}
+
+	again, created, err := New(root, "アーキ定例10-28")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created || again.Path != meeting.Path {
+		t.Errorf("New on an existing name = %+v (created=%v), want the existing %s", again, created, meeting.DirName)
+	}
+
+	if _, _, err := New(root, "a:b"); !errors.Is(err, ErrInvalidName) {
+		t.Errorf("New(a:b): err = %v, want ErrInvalidName", err)
 	}
 }

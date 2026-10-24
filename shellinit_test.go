@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -181,9 +182,9 @@ func answer(n int, out string, status int) []string {
 	}
 }
 
-// selection is what fzf prints with --print-query when the user picks a row:
-// the query, then the chosen line.
-func selection(query, row string) string { return query + "\n" + row }
+// selection is what fzf prints with --print-query and --expect when the user
+// picks a row with enter: the query, an empty key line, then the chosen line.
+func selection(query, row string) string { return query + "\n\n" + row }
 
 func eachShell(t *testing.T, fn func(t *testing.T, shell string)) {
 	t.Helper()
@@ -375,34 +376,87 @@ func TestShellInit_ParsesInBothShells(t *testing.T) {
 	}
 }
 
-// TestPreview_ShowsMainNoteElseListsDir runs the preview command the way fzf
-// does: {1} replaced by the single-quoted path column, then handed to a shell.
-func TestPreview_ShowsMainNoteElseListsDir(t *testing.T) {
+// TestPick_CtrlOCreatesDespiteMatch is the umbrella-topic and recurring
+// incident case: what was typed matches an existing topic, in fzf and by
+// name, yet ctrl-o makes a new topic named exactly that.
+func TestPick_CtrlOCreatesDespiteMatch(t *testing.T) {
+	for _, status := range []int{0, 1} {
+		t.Run(fmt.Sprintf("fzf status %d", status), func(t *testing.T) {
+			eachShell(t, func(t *testing.T, shell string) {
+				env := buildEnv(t)
+				env.mkTopic(t, "2026-01-01-アーキ定例 10-28")
+				row := filepath.Join(env.root, "2026-01-01-アーキ定例 10-28") + "\t  2026-01-01-アーキ定例 10-28"
+				out := "アーキ定例\nctrl-o"
+				if status == 0 {
+					out += "\n" + row
+				}
+
+				stdout, stderr, code := env.run(t, shell, "__dw_pick", answer(1, out, status)...)
+				if code != 0 {
+					t.Fatalf("code = %d, want 0 (stderr: %s)", code, stderr)
+				}
+				dirs := env.dirs(t)
+				if len(dirs) != 2 {
+					t.Fatalf("root holds %v, want the existing topic plus a new アーキ定例", dirs)
+				}
+				if !strings.HasSuffix(strings.TrimSpace(stdout), "-アーキ定例") {
+					t.Errorf("__dw_pick printed %q, want the new アーキ定例 row", stdout)
+				}
+				if !strings.Contains(stderr, "dw: created") {
+					t.Errorf("stderr = %q, want the creation announced", stderr)
+				}
+			})
+		})
+	}
+}
+
+// sortFileList sorts the lines after "--- files": ls collates by locale, and
+// macOS puts some non-ASCII names before ASCII ones.
+func sortFileList(preview string) string {
+	head, list, ok := strings.Cut(preview, "--- files\n")
+	if !ok {
+		return preview
+	}
+	names := strings.Split(list, "\n")
+	sort.Strings(names)
+	return head + "--- files\n" + strings.Join(names, "\n")
+}
+
+// TestPreview_ShowsNoteThenFiles runs the preview command the way fzf does:
+// {1} replaced by the single-quoted path column, then handed to a shell.
+func TestPreview_ShowsNoteThenFiles(t *testing.T) {
 	eachShell(t, func(t *testing.T, shell string) {
 		env := buildEnv(t)
-		withNote := filepath.Join(env.root, "2026-01-01-調べ方を 設計する")
-		bare := filepath.Join(env.root, "2026-01-02-legacy")
-		for _, d := range []string{withNote, bare} {
-			if err := os.MkdirAll(d, 0o755); err != nil {
-				t.Fatal(err)
+		files := map[string]map[string]string{
+			"2026-01-01-調べ方を 設計する": {"調べ方を 設計する.md": "# 調べ方を 設計する\n", "compare.html": ""},
+			"2026-01-02-legacy":    {"STATE.md": "# Legacy state\n"},
+			"hand-made":            {"README.md": "# Hand made\n", "STATE.md": "# not shown\n"},
+			"2026-01-03-bare":      {"notes.txt": ""},
+		}
+		want := map[string]string{
+			"2026-01-01-調べ方を 設計する": "# 調べ方を 設計する\n\n--- files\ncompare.html\n調べ方を 設計する.md",
+			"2026-01-02-legacy":    "# Legacy state\n\n--- files\nSTATE.md",
+			"hand-made":            "# Hand made\n\n--- files\nREADME.md\nSTATE.md",
+			"2026-01-03-bare":      "--- files\nnotes.txt",
+		}
+		for dir, fs := range files {
+			env.mkTopic(t, dir)
+			for name, body := range fs {
+				if err := os.WriteFile(filepath.Join(env.root, dir, name), []byte(body), 0o644); err != nil {
+					t.Fatal(err)
+				}
 			}
-		}
-		if err := os.WriteFile(filepath.Join(withNote, "調べ方を 設計する.md"), []byte("# 調べ方を 設計する\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(bare, "README.md"), nil, 0o644); err != nil {
-			t.Fatal(err)
 		}
 
 		preview, _, _ := env.run(t, shell, `printf '%s' "$__dw_preview"`)
-		for dir, want := range map[string]string{withNote: "# 調べ方を 設計する", bare: "README.md"} {
-			cmd := strings.ReplaceAll(preview, "{1}", "'"+dir+"'")
+		for dir, w := range want {
+			cmd := strings.ReplaceAll(preview, "{1}", "'"+filepath.Join(env.root, dir)+"'")
 			out, err := exec.Command(shell, "-c", cmd).CombinedOutput() //nolint:gosec // cmd is the wrapper's own preview string
 			if err != nil {
 				t.Fatalf("preview for %s failed: %v\n%s", dir, err, out)
 			}
-			if strings.TrimSpace(string(out)) != want {
-				t.Errorf("preview for %s = %q, want %q", filepath.Base(dir), out, want)
+			if got := sortFileList(strings.TrimSpace(string(out))); got != w {
+				t.Errorf("preview for %s =\n%s\nwant\n%s", dir, got, w)
 			}
 		}
 	})

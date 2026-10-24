@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-// setup isolates DW_ROOT (to a fresh temp dir) and the "last visited" cache
+// setup isolates DW_ROOT (to a fresh temp dir) and the recent-topics cache
 // (to a fresh HOME) so tests never touch the real ~/dw or ~/.cache/dw/last.
 // It returns the isolated root.
 func setup(t *testing.T) string {
@@ -246,5 +246,86 @@ func TestRun_InitShellWrapper(t *testing.T) {
 	}
 	if _, _, code := runCmd(t, "init", "fish"); code != 2 {
 		t.Errorf("dw init fish: code = %d, want 2", code)
+	}
+}
+
+// TestRun_CreationIsAnnounced: a new topic's row looks the same as an
+// existing one's, so only stderr tells a typo or a search term from a topic
+// that was already there.
+func TestRun_CreationIsAnnounced(t *testing.T) {
+	setup(t)
+	stdout, stderr, _ := runCmd(t, "teams ベンダー")
+	path, _, _ := strings.Cut(stdout, "\t")
+	if stderr != "dw: created "+path+"\n" {
+		t.Errorf("stderr on creation = %q, want \"dw: created %s\"", stderr, path)
+	}
+
+	if _, stderr, _ := runCmd(t, "Teams ベンダー"); stderr != "" {
+		t.Errorf("stderr when opening an existing topic = %q, want nothing", stderr)
+	}
+}
+
+func TestRun_BadNameNamesTheCharacter(t *testing.T) {
+	setup(t)
+	_, stderr, code := runCmd(t, "決済API 5xx 14:05")
+	if code != 2 || !strings.Contains(stderr, `(found ":")`) {
+		t.Errorf("code = %d, stderr = %q; want 2 and the offending \":\" named", code, stderr)
+	}
+}
+
+func TestRun_NewCreatesDespitePartialMatch(t *testing.T) {
+	root := setup(t)
+	if _, _, code := runCmd(t, "アーキ定例 10-28"); code != 0 {
+		t.Fatal("setup creation failed")
+	}
+	if _, _, code := runCmd(t, "アーキ定例"); code != 0 {
+		t.Fatal("resolve failed")
+	}
+	if entries, _ := os.ReadDir(root); len(entries) != 1 {
+		t.Fatalf("plain dw created %d topics for a partial match, want it to open the existing one", len(entries)-1)
+	}
+
+	stdout, stderr, code := runCmd(t, "new", "アーキ定例")
+	if code != 0 {
+		t.Fatalf("code = %d, want 0 (stderr: %s)", code, stderr)
+	}
+	if !strings.HasSuffix(strings.TrimSpace(stdout), "-アーキ定例") || !strings.Contains(stderr, "dw: created") {
+		t.Errorf("dw new: stdout = %q, stderr = %q; want the new アーキ定例 row, announced", stdout, stderr)
+	}
+
+	if _, _, code := runCmd(t, "new"); code != 2 {
+		t.Errorf("dw new with no name: code = %d, want 2", code)
+	}
+}
+
+func TestRun_ListPinsRecentTopics(t *testing.T) {
+	setup(t)
+	for _, name := range []string{"long-running", "a", "b", "c"} {
+		if _, _, code := runCmd(t, name); code != 0 {
+			t.Fatalf("setup creation of %q failed", name)
+		}
+	}
+	runCmd(t, "long-running")
+	runCmd(t, "b")
+
+	stdout, _, _ := runCmd(t)
+	var got []string
+	for line := range strings.SplitSeq(strings.TrimRight(stdout, "\n"), "\n") {
+		_, dir, _ := strings.Cut(line, "\t")
+		got = append(got, dir[:2]+dir[2+len("YYYY-MM-DD-"):]) // marker + name
+	}
+	if want := []string{"* b", "  long-running", "  c", "  a"}; strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("listing = %q, want %q (recent visits first, newest marked)", got, want)
+	}
+}
+
+func TestIsTerminal_DevNullIsNotATerminal(t *testing.T) {
+	f, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if isTerminal(f) {
+		t.Error("isTerminal(/dev/null) = true, so `dw >/dev/null` would print hints")
 	}
 }

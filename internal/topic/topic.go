@@ -5,9 +5,11 @@ package topic
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -66,18 +68,41 @@ func Root() string {
 	return r
 }
 
-// ValidateName trims s and returns it unchanged otherwise: the name the user
-// typed is the name they get, so a bad character is an error rather than
-// something silently rewritten.
+// ValidateName returns s with each run of spaces (full-width included)
+// collapsed to one ASCII space and the ends trimmed. Otherwise the name the
+// user typed is the name they get, so a bad character is an error naming
+// that character rather than something silently rewritten.
+//
+// Spaces are the one exception because a stray double or full-width space is
+// invisible in a listing: left alone, it made a second topic that looked
+// identical to the first.
 func ValidateName(s string) (string, error) {
-	name := strings.TrimSpace(s)
+	if i := strings.IndexFunc(s, unicode.IsControl); i >= 0 {
+		return "", fmt.Errorf("%w (found %q)", ErrInvalidName, string([]rune(s[i:])[0]))
+	}
+	name := strings.Join(strings.Fields(s), " ")
 	if name == "" {
 		return "", ErrEmptyName
 	}
-	if strings.HasPrefix(name, ".") || strings.ContainsAny(name, forbiddenChars) || strings.ContainsFunc(name, unicode.IsControl) {
-		return "", ErrInvalidName
+	if strings.HasPrefix(name, ".") {
+		return "", fmt.Errorf("%w (found a leading \".\")", ErrInvalidName)
+	}
+	if i := strings.IndexAny(name, forbiddenChars); i >= 0 {
+		return "", fmt.Errorf("%w (found %q)", ErrInvalidName, name[i:i+1])
 	}
 	return name, nil
+}
+
+// matchKey is what names are compared by: case, spaces, "-" and "_" are
+// ignored, so "Datadog Cost" finds a topic made as "datadog-cost" instead of
+// quietly creating a twin of it.
+func matchKey(s string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsSpace(r) || r == '-' || r == '_' {
+			return -1
+		}
+		return unicode.ToLower(r)
+	}, s)
 }
 
 // parseTopic builds a Topic from a directory name found directly under root.
@@ -152,10 +177,11 @@ func Create(root, rawName string, now time.Time) (Topic, error) {
 // Resolve finds the topic(s) under root matching arg, creating one when
 // nothing matches at all:
 //
-//  1. Exact match on Name or DirName (ignoring case), or on Path for an
-//     absolute arg, wins outright — one result, nothing created.
-//  2. Otherwise, partial match on Name (ignoring case): one result if there's
-//     exactly one, or every match (fzf's job to disambiguate) if there's more.
+//  1. Exact match on Name or DirName (compared by matchKey), or on Path for
+//     an absolute arg, wins outright — one result, nothing created.
+//  2. Otherwise, partial match on Name (compared by matchKey): one result if
+//     there's exactly one, or every match (fzf's job to disambiguate) if
+//     there's more.
 //  3. Otherwise, a new topic is created.
 //
 // Matching an existing name before creating is what keeps topic names unique
@@ -166,32 +192,31 @@ func Create(root, rawName string, now time.Time) (Topic, error) {
 // created reports whether Resolve made a new directory. Callers should call
 // SaveLast only when Resolve returns exactly one match — see main.go.
 func Resolve(root, arg string) (matches []Topic, created bool, err error) {
-	trimmed := strings.TrimSpace(arg)
-	abs := filepath.IsAbs(trimmed)
-	if !abs {
-		if trimmed, err = ValidateName(trimmed); err != nil {
+	if path := strings.TrimSpace(arg); filepath.IsAbs(path) {
+		topics, err := Scan(root)
+		if err != nil {
 			return nil, false, err
 		}
-	}
-
-	topics, err := Scan(root)
-	if err != nil {
-		return nil, false, err
-	}
-
-	for _, t := range topics {
-		if (abs && t.Path == trimmed) || (!abs && (strings.EqualFold(t.Name, trimmed) || strings.EqualFold(t.DirName, trimmed))) {
-			return []Topic{t}, false, nil
+		for _, t := range topics {
+			if t.Path == path {
+				return []Topic{t}, false, nil
+			}
 		}
-	}
-	if abs {
 		return nil, false, ErrNotFound
 	}
 
-	query := strings.ToLower(trimmed)
+	name, topics, err := validateAndScan(root, arg)
+	if err != nil {
+		return nil, false, err
+	}
+	if t, ok := findExact(topics, name); ok {
+		return []Topic{t}, false, nil
+	}
+
+	query := matchKey(name)
 	var partial []Topic
 	for _, t := range topics {
-		if strings.Contains(strings.ToLower(t.Name), query) {
+		if query != "" && strings.Contains(matchKey(t.Name), query) {
 			partial = append(partial, t)
 		}
 	}
@@ -199,20 +224,57 @@ func Resolve(root, arg string) (matches []Topic, created bool, err error) {
 		return partial, false, nil // already ordered by Scan
 	}
 
-	t, err := Create(root, trimmed, time.Now())
+	t, err := Create(root, name, time.Now())
 	if err != nil {
 		return nil, false, err
 	}
 	return []Topic{t}, true, nil
 }
 
+// New is Resolve without the partial-match step: it opens the topic whose
+// name matches arg exactly, and otherwise creates one, even when arg is part
+// of an existing name. That is the only way to make "アーキ定例" once
+// "アーキ定例 10-28" exists. An exact match still opens rather than
+// duplicates, so names stay unique.
+func New(root, arg string) (t Topic, created bool, err error) {
+	name, topics, err := validateAndScan(root, arg)
+	if err != nil {
+		return Topic{}, false, err
+	}
+	if t, ok := findExact(topics, name); ok {
+		return t, false, nil
+	}
+	t, err = Create(root, name, time.Now())
+	return t, err == nil, err
+}
+
+func validateAndScan(root, arg string) (string, []Topic, error) {
+	name, err := ValidateName(arg)
+	if err != nil {
+		return "", nil, err
+	}
+	topics, err := Scan(root)
+	return name, topics, err
+}
+
+func findExact(topics []Topic, name string) (Topic, bool) {
+	key := matchKey(name)
+	for _, t := range topics {
+		if matchKey(t.Name) == key || matchKey(t.DirName) == key {
+			return t, true
+		}
+	}
+	return Topic{}, false
+}
+
 // TSVRow formats t as one line of dw's stdout contract:
 //
 //	<absolute path>\t<marker + directory name>
 //
-// last is the currently pinned path (LastPath()); when it equals t.Path the
-// marker is "* ", otherwise two spaces. The wrapper hides the path column
-// from fzf, so the second column is both what is shown and what is searched.
+// last is the most recently visited path (Recent()[0]); when it equals
+// t.Path the marker is "* ", otherwise two spaces. The wrapper hides the path
+// column from fzf, so the second column is both what is shown and what is
+// searched.
 func (t Topic) TSVRow(last string) string {
 	marker := "  "
 	if last != "" && last == t.Path {
@@ -221,28 +283,21 @@ func (t Topic) TSVRow(last string) string {
 	return t.Path + "\t" + marker + t.DirName
 }
 
-// PinLast moves the topic whose Path equals last to the front of ts, leaving
-// the rest in their existing order. Used for the bare `dw` listing, which
-// pins the most recently visited topic to the top. A no-op when last is "" or
-// not found in ts.
-func PinLast(ts []Topic, last string) []Topic {
-	if last == "" {
-		return ts
-	}
-	idx := -1
-	for i, t := range ts {
-		if t.Path == last {
-			idx = i
-			break
+// PinRecent moves the topics whose Path is in recent to the front of ts, in
+// recent's order, leaving the rest in their existing order. Used for the bare
+// `dw` listing. Paths in recent that aren't in ts are ignored.
+func PinRecent(ts []Topic, recent []string) []Topic {
+	out := make([]Topic, 0, len(ts))
+	for _, p := range recent {
+		if i := slices.IndexFunc(ts, func(t Topic) bool { return t.Path == p }); i >= 0 {
+			out = append(out, ts[i])
 		}
 	}
-	if idx <= 0 {
-		return ts
+	for _, t := range ts {
+		if !slices.Contains(recent, t.Path) {
+			out = append(out, t)
+		}
 	}
-	out := make([]Topic, 0, len(ts))
-	out = append(out, ts[idx])
-	out = append(out, ts[:idx]...)
-	out = append(out, ts[idx+1:]...)
 	return out
 }
 
